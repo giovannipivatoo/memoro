@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import io.github.giovannipivatoo.memoro.data.MemoroRepository
 import kotlinx.coroutines.Dispatchers
@@ -24,12 +25,12 @@ import java.io.IOException
 private val mediaMarker = Regex("\\[(image|audio):([^]]+)]")
 
 @Composable
-internal fun StudyFace(face: String, repo: MemoroRepository, modifier: Modifier = Modifier) {
+internal fun StudyFace(face: String, repo: MemoroRepository, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyLarge) {
     Column(modifier.semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         var start = 0
         mediaMarker.findAll(face).forEach { match ->
             val text = face.substring(start, match.range.first).trim()
-            if (text.isNotBlank()) Text(text, style = MaterialTheme.typography.bodyLarge)
+            if (text.isNotBlank()) Text(text, style = textStyle)
             val path = match.groupValues[2]
             if (path.startsWith("media/") && !path.contains("..")) {
                 if (match.groupValues[1] == "image") StudyImage(repo, path)
@@ -38,7 +39,7 @@ internal fun StudyFace(face: String, repo: MemoroRepository, modifier: Modifier 
             start = match.range.last + 1
         }
         val tail = face.substring(start).trim()
-        if (tail.isNotBlank()) Text(tail, style = MaterialTheme.typography.bodyLarge)
+        if (tail.isNotBlank()) Text(tail, style = textStyle)
     }
 }
 

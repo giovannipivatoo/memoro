@@ -7,9 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.SideEffect
@@ -22,6 +19,7 @@ import io.github.giovannipivatoo.memoro.data.RoomMemoroRepository
 import io.github.giovannipivatoo.memoro.data.SettingsStore
 import io.github.giovannipivatoo.memoro.ui.AppActions
 import io.github.giovannipivatoo.memoro.ui.MemoroApp
+import io.github.giovannipivatoo.memoro.ui.MemoroTheme
 
 class MemoroHost(application: Application) : AndroidViewModel(application) {
     val repository = RoomMemoroRepository.open(application)
@@ -50,7 +48,7 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            MemoroTheme {
                 MemoroApp(host.repository, AppActions(
                     apiKey = { host.credentials.read().orEmpty() },
                     saveApiKey = { if (it.isBlank()) host.credentials.clear() else host.credentials.save(it) },
