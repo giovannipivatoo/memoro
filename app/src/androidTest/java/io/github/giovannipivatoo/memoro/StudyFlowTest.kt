@@ -2,7 +2,9 @@ package io.github.giovannipivatoo.memoro
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.activity.ComponentActivity
+import android.view.WindowManager
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,12 +22,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StudyFlowTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private lateinit var repo: RoomMemoroRepository
     private var deckId = 0L
     private var cardId = 0L
 
     @Before fun prepare(): Unit = runBlocking {
+        // Match MainActivity: the test manifest otherwise allows IME panning to move click targets.
+        compose.activityRule.scenario.onActivity {
+            it.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
         repo = RoomMemoroRepository.open(ApplicationProvider.getApplicationContext())
         repo.restoreSnapshot(ArchiveSnapshot())
         val deck = repo.saveDeck(Deck(name = "Geografia di prova"))
@@ -150,9 +156,14 @@ class StudyFlowTest {
         compose.onNodeWithText("Modifica esito").performScrollTo().performClick()
         compose.onNodeWithText("Corretta").performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().attempts.any { it.finalOutcome == Outcome.CORRECT } } }
+        // Restore the visible evaluated screen after the override has finished updating the UI.
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("Esito finale: Corretta").fetchSemanticsNodes().isNotEmpty()
+        }
         restoration.emulateSavedInstanceStateRestore()
         waitTag("referenceAnswer")
         compose.onNodeWithText("Esito automatico: Errata").performScrollTo().assertExists()
+        compose.onNodeWithText("Esito finale: Corretta").performScrollTo().assertExists()
         compose.onNodeWithTag("rate-EASY").performScrollTo().performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 1 } }
         assertEquals(Outcome.CORRECT, runBlocking { repo.snapshot().attempts.single().finalOutcome })
