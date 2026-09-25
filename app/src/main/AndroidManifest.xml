@@ -4,6 +4,7 @@
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Memoro"
         android:icon="@drawable/ic_memoro"
         android:supportsRtl="true"
