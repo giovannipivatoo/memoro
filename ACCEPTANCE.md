@@ -1,6 +1,6 @@
-# Accettazione v0.1
+# Accettazione v0.2
 
-Verifiche del 25 settembre 2026. Sorgenti applicativi verificati al commit `afc7b95`; gli aggiornamenti successivi del rapporto, screenshot e attribuzioni non cambiano il comportamento. Android 16/API 36, emulatore arm64 Pixel 7 dedicato; JDK 17. CI aggiunge Android API 35 x86_64.
+Verifiche del 25 settembre 2026. Redesign sviluppato sul branch `feat/ui-ux-refresh`; la verifica Anki esterna sotto riportata proviene dalla v0.1 (`afc7b95`) e il relativo motore non è stato modificato dal redesign. Android 16/API 36, emulatore arm64 Pixel 7 dedicato; JDK 17. CI aggiunge Android API 35 x86_64.
 
 ## Esito
 
@@ -13,7 +13,7 @@ Verifiche del 25 settembre 2026. Sorgenti applicativi verificati al commit `afc7
 - [x] R09: backup/ripristino, copia preventiva, ZIP troncato, digest errato e path traversal; esclusione della chiave; file e ripassi conservati dopo riapertura.
 - [x] R10: bozza e risposta valutata conservate alla ricreazione; cronologia e statistiche implementate, cancellazione dati personali del tentativo verificata.
 - [x] R11: opzione gattino, reazione all'esito e verifica visiva chiaro/scuro. Il codice rispetta la scala animazioni di Android e mantiene neutro il pet su errori tecnici.
-- [x] R12: compilazione APK installabile, **8 test unitari e 14 test strumentali**, lint senza errori; documentazione di uso, build e limiti.
+- [x] R12: compilazione APK installabile, **8 test unitari e 16 test strumentali**, lint senza errori; documentazione di uso, build e limiti.
 
 ## Prove riproducibili
 
@@ -31,10 +31,10 @@ Rapporti generati in `app/build/reports/tests/testDebugUnitTest/`, `app/build/re
 | `DeepSeekClientTest` | Contenuto richiesta, risposte JSON, conflitto fonte, malformed/vuoto/troncato, 401/429/500, timeout e nessun reinvio |
 | `RepositoryPersistenceTest` | Room, cloze Android, revisione concorrente/idempotente, backup, Keystore, riapertura, GUID e precedenza modifiche locali/remote |
 | `AnkiInteropTest` | Due fixture reali, media, cinque carte importate, cloze esatto, export misto e legacy nativo, reimportazione |
-| `StudyFlowTest` | Editor, rettifica esito/voto, rete indisponibile, bozza non rivelata, stato valutato ripristinato |
+| `StudyFlowTest` | Editor e uscita protetta, rettifica esito/voto, rete indisponibile, bozza non rivelata, stato valutato ripristinato, coda globale su due mazzi e risposte isolate fra carte |
 | `HostFlowTest` | Activity reale: impostazioni pet, creazione mazzo/nota, modalità, ricreazione Activity con bozza, esito corretto e voto |
 
-Screenshot verificati del vero host: [chiaro](docs/screenshots/study-light.png), [scuro](docs/screenshots/study-dark.png). La verifica visiva ha corretto contrasto della barra di stato e leggibilità della risposta inviata. Non è una certificazione su ogni dimensione dello schermo o dispositivo fisico. L'interruzione forzata nel mezzo del ripristino non è stata iniettata automaticamente: la protezione deriva dal puntatore alla generazione file aggiornato nella stessa transazione Room, verificato con ripristino e riapertura.
+Screenshot del vero host: [home](docs/screenshots/home-light.png), [editor](docs/screenshots/editor-light.png), [impostazioni](docs/screenshots/settings-light.png), [cronologia](docs/screenshots/history-light.png), studio [chiaro](docs/screenshots/study-light.png) e [scuro](docs/screenshots/study-dark.png). La verifica visiva ha corretto la sovrapposizione della tastiera al salvataggio, gli esiti duplicati e i conteggi al singolare. Il percorso reale completo è passato anche in tema scuro con [testo al 130%](docs/screenshots/study-large-font.png); verificati scorrimento e [Salva sopra la tastiera](docs/screenshots/editor-keyboard-light.png). Ricerca, decisioni e provenienza del nuovo pet sono in [UI-UX.md](docs/UI-UX.md). Non è una certificazione su ogni dimensione dello schermo o dispositivo fisico. L'interruzione forzata nel mezzo del ripristino non è stata iniettata automaticamente: la protezione deriva dal puntatore alla generazione file aggiornato nella stessa transazione Room, verificato con ripristino e riapertura.
 
 ## Oracle Anki esterno
 

@@ -5,7 +5,7 @@ App Android personale open source, Kotlin/Jetpack Compose, BSD-2-Clause. Dati lo
 ## Requisiti
 
 - R01: Creare, modificare, eliminare mazzi e note manualmente; carte fronte/retro, inverse, cloze, immagini e audio. Distinguere nota e carte generate.
-- R02: Modalità per carta: CLASSIC (rivela/autovaluta), EXACT (risposta scritta confrontata localmente), AI (risposta scritta valutata da DeepSeek). Importazioni inizialmente CLASSIC; selezione multipla delle modalità su risposte testuali compatibili.
+- R02: Modalità per carta: CLASSIC (rivela/autovaluta), EXACT (risposta scritta confrontata localmente), AI (risposta scritta valutata da DeepSeek). Importazioni inizialmente CLASSIC. La UI imposta una modalità preferita per carta, anche su più carte selezionate; CLASSIC rimane disponibile nello studio. Archivi precedenti con più modalità restano leggibili. EXACT/AI richiedono risposte testuali compatibili.
 - R03: EXACT ignora maiuscole/minuscole e spazi esterni, distingue accenti e punteggiatura. Utente può rettificare ogni esito in corretta/parziale/errata, senza cambiare la carta.
 - R04: AI confronta domanda, risposta di riferimento, risposta utente, eventuali punti essenziali ed estratto fonte. Mostra riferimento, esito, errori, omissioni e spiegazione. Esiti: corretta, parziale, errata, non valutabile. Conflitti fonte/risposta sono non valutabili; niente invenzione di fonti. Link/pagina sono metadati, non fonti lette.
 - R05: Solo conferma umana Da rifare/Difficile/Buona/Facile aggiorna FSRS e registra ripasso, atomicamente e una volta per tentativo. AI e rettifica non programmano scadenze. Conservare testo, esito automatico e finale separati.
@@ -14,7 +14,7 @@ App Android personale open source, Kotlin/Jetpack Compose, BSD-2-Clause. Dati lo
 - R08: Import/export .apkg legacy e moderno: contenuti supportati, media, cronologia, scadenze e stato; identificativi stabili e reimportazione senza duplicati. Rapporto incompatibilità per template/JS non supportati; preservare pacchetto originale. Nessuna perdita silenziosa. Rendering isolato senza JS/rete. .colpkg e sincronizzazione AnkiWeb fuori v1.
 - R09: Backup completo versionato di dati, tentativi, fonti, media e pacchetti originali; esclusa chiave API. Validare prima di ripristino, conferma esplicita, backup preventivo. Nessun backup cloud Android automatico.
 - R10: Schermate mazzi, elenco/editor, studio, cronologia/statistiche, impostazioni. Statistiche scadenze/ripassi/esiti. Modalità scritte rivelano risposta solo dopo invio; classica su richiesta.
-- R11: Gattino vettoriale nero, testa e occhi grandi, opzionale disattivato inizialmente. Attesa/festa/incoraggiamento/pensieroso; segue esito rettificato; neutro su errore tecnico. Silenzioso, non sposta controlli, pose statiche con movimento ridotto.
+- R11: Gattino nero con testa e occhi grandi, illustrazione trasparente ispirata al pet di riferimento fornito dall’utente, opzionale disattivato inizialmente. Attesa/festa/incoraggiamento/pensieroso; segue esito rettificato; neutro su errore tecnico. Silenzioso, non sposta controlli, pose statiche con movimento ridotto.
 - R12: Sorgenti, documenti, APK, build riproducibile e verifiche Android. Prova DeepSeek reale subordinata a chiave utente, indicata pendente se assente.
 
 ## Rimandato
