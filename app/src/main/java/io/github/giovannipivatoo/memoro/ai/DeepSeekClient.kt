@@ -51,6 +51,7 @@ class DeepSeekClient(
     suspend fun evaluate(input: EvaluationInput, apiKey: String, model: String = "deepseek-flash"): EvaluationResult =
         withContext(Dispatchers.IO) {
             if (apiKey.isBlank()) return@withContext EvaluationResult.Failure("Inserisci la chiave API nelle impostazioni.")
+            if (apiKey.any { it == '\r' || it == '\n' }) return@withContext EvaluationResult.Failure("Chiave API non valida; reinseriscila nelle impostazioni.")
             if (input.question.isBlank() || input.referenceAnswer.isBlank() || input.userAnswer.isBlank()) {
                 return@withContext EvaluationResult.Failure("Domanda, riferimento e risposta sono necessari.")
             }
@@ -65,6 +66,8 @@ class DeepSeekClient(
             val body = JsonObject(mapOf(
                 "model" to JsonPrimitive(model.ifBlank { "deepseek-flash" }),
                 "stream" to JsonPrimitive(false),
+                "thinking" to JsonObject(mapOf("type" to JsonPrimitive("disabled"))),
+                "temperature" to JsonPrimitive(0),
                 "max_tokens" to JsonPrimitive(800),
                 "response_format" to JsonObject(mapOf("type" to JsonPrimitive("json_object"))),
                 "messages" to JsonArray(listOf(
@@ -72,15 +75,18 @@ class DeepSeekClient(
                     JsonObject(mapOf("role" to JsonPrimitive("user"), "content" to JsonPrimitive(userContent.toString()))),
                 )),
             )).toString()
-            val request = Request.Builder().url(endpoint)
-                .header("Authorization", "Bearer $apiKey")
-                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
             try {
+                val request = Request.Builder().url(endpoint)
+                    .header("Authorization", "Bearer $apiKey")
+                    .post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
                 http.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@withContext EvaluationResult.Failure(
                         when (response.code) {
                             401 -> "Chiave API non valida (401)."
+                            402 -> "Saldo DeepSeek insufficiente (402)."
+                            400, 422 -> "Modello o richiesta non accettati da DeepSeek (${response.code}). Controlla il modello nelle impostazioni."
                             429 -> "Limite API raggiunto (429). Riprova quando vuoi."
+                            in 500..599 -> "DeepSeek non è disponibile al momento (${response.code}). Riprova quando vuoi."
                             else -> "Errore API (${response.code}). Riprova quando vuoi."
                         },
                     )

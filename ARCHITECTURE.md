@@ -17,6 +17,8 @@ Un modulo Android `app`, Kotlin, Compose Material 3, minSdk 26, database Room. P
 
 I client AI restituiscono risultati senza accedere al repository o alle scadenze. `DeepSeekClient` usa HTTPS, timeout e limiti di risposta, nessun redirect o retry automatico. Il prompt separa le istruzioni dai contenuti da valutare. I risultati JSON sono validati; conflitti ed errori tecnici rimangono non valutabili.
 
+La correzione usa JSON Output e disabilita esplicitamente la modalità thinking, per riservare il limite di output al feedback. Le impostazioni riusano lo stesso client per una prova esplicita su un esempio fisso: salvare le credenziali o aprire la schermata non avvia richieste. Riferimenti del protocollo: [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/) e [JSON Output](https://api-docs.deepseek.com/guides/json_mode/), verificati il 25 settembre 2026.
+
 ## Ciclo di vita e studio
 
 `MemoroHost`, un AndroidViewModel, mantiene repository e servizi durante la ricreazione dell'Activity. Compose salva pagina e dati transitori con `rememberSaveable`; le bozze e i risultati già valutati vengono ricaricati da Room prima di abilitare l'input. La risposta di riferimento e la fonte restano nascoste fino all'invio. L'autovalutazione è sempre disponibile senza rete. `Attempt.isPractice` separa bozze e risultati del ripasso libero. `finishPractice` porta un tentativo valutato a PRACTICED in modo idempotente; non crea Review. `commitReview` rifiuta tentativi liberi. Il cursore della sessione libera sopravvive alla ricreazione.
