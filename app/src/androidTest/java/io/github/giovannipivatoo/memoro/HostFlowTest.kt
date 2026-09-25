@@ -54,7 +54,11 @@ class HostFlowTest {
         compose.onNodeWithTag("addDeck").performScrollTo().performClick()
         compose.onNodeWithTag("deckName").performTextInput(deckName)
         compose.onNodeWithText("Salva").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText(deckName).fetchSemanticsNodes().isNotEmpty() }
+        // Saving uses Room asynchronously; the dialog's editable text also matches deckName.
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("deckName").fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithText(deckName).fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText(deckName).performScrollTo().performClick()
         compose.onNodeWithTag("addNote").performClick()
         waitTag("noteFront")
