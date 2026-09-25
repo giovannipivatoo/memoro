@@ -7,7 +7,6 @@ import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.roundToLong
 
 /** Deterministic FSRS-6 scheduler, default parameters and 90% desired retention. */
 object Fsrs6 {
@@ -32,7 +31,7 @@ object Fsrs6 {
         } else previous
         val difficulty = if (first) initialDifficulty(grade) else nextDifficulty(seed.difficulty, grade)
         val stability = if (first) w[grade - 1] else {
-            val elapsed = max(0.0, (nowMillis - seed.lastReviewAtMillis!!).toDouble() / DAY)
+            val elapsed = ((nowMillis - seed.lastReviewAtMillis!!).coerceAtLeast(0L) / DAY).toDouble()
             val s = seed.stability
             if (elapsed < 1.0) {
                 val multiplier = exp(w[17] * (grade - 3 + w[18])) * s.pow(-w[19])
@@ -50,8 +49,8 @@ object Fsrs6 {
                         (exp(w[10] * (1 - r)) - 1) * penalty * bonus)
                 }
             }
-        }.coerceIn(0.01, 36500.0)
-        val intervalDays = (stability / factor * (retention.pow(-1.0 / w[20]) - 1)).roundToLong().coerceIn(1, 36500)
+        }.coerceAtLeast(0.001)
+        val intervalDays = Math.rint(stability / factor * (retention.pow(-1.0 / w[20]) - 1)).toLong().coerceIn(1, 36500)
         val learning = first || previous.learningStep != null
         val wasRelearning = previous.relearning
         val step = previous.learningStep ?: 0

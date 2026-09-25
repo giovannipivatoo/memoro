@@ -17,6 +17,7 @@ interface MemoroRepository {
     suspend fun saveDeck(deck: Deck): Deck
     suspend fun deleteDeck(id: Long)
     suspend fun saveNote(note: Note): Note
+    suspend fun saveNoteAndCards(note: Note, cards: List<Card>): Note
     suspend fun deleteNote(id: Long)
     suspend fun saveCard(card: Card): Card
     suspend fun saveAttempt(attempt: Attempt): Attempt
@@ -24,7 +25,7 @@ interface MemoroRepository {
     suspend fun commitReview(attemptId: Long, rating: Rating, nowMillis: Long): Review
     suspend fun snapshot(): ArchiveSnapshot
     suspend fun importSnapshot(snapshot: ArchiveSnapshot)
-    suspend fun restoreSnapshot(snapshot: ArchiveSnapshot)
+    suspend fun restoreSnapshot(snapshot: ArchiveSnapshot, fileRootName: String? = null)
     suspend fun putFile(path: String, input: InputStream, mimeType: String? = null): StoredFile
     suspend fun openFile(path: String): InputStream?
 }

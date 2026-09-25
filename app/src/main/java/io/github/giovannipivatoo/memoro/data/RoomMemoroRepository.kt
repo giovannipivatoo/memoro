@@ -7,6 +7,9 @@ import androidx.room.withTransaction
 import io.github.giovannipivatoo.memoro.study.Fsrs6
 import java.io.File
 import java.io.InputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +23,6 @@ import org.json.JSONObject
 class RoomMemoroRepository private constructor(private val context: Context, private val db: MemoroDatabase) : MemoroRepository {
     private val dao = db.dao()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val blobRoot = File(context.filesDir, "archive-files")
 
     companion object {
         fun open(context: Context): RoomMemoroRepository {
@@ -52,13 +54,36 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         dao.deleteCardsForDeck(id); dao.deleteNotesForDeck(id); dao.deleteDeck(id)
     }
 
-    override suspend fun saveNote(note: Note): Note = db.withTransaction {
+    override suspend fun saveNote(note: Note): Note = saveNoteInternal(note, importing = false)
+
+    override suspend fun saveNoteAndCards(note: Note, cards: List<Card>): Note = db.withTransaction {
+        require(note.id > 0 && note.anki != null) { "Atomic card edit requires an imported note" }
+        require(cards.map { it.ordinal }.distinct().size == cards.size)
+        val existing = dao.cardsForNote(note.id).associateBy { it.id }
+        require(cards.all { it.id > 0 && it.noteId == note.id && it.deckId == existing[it.id]?.deckId })
+        require(cards.map { it.id }.toSet() == existing.keys) { "All imported cards must be updated together" }
+        val saved = saveNoteInternal(note, importing = false)
+        cards.forEach { saveCard(it) }
+        saved
+    }
+
+    private suspend fun saveNoteInternal(note: Note, importing: Boolean): Note = db.withTransaction {
         require(dao.deck(note.deckId) != null) { "Unknown deck" }
         require(note.fields.isNotEmpty()) { "At least one field required" }
         require(note.anki != null || note.fields.size >= 2) { "Native notes need two fields" }
-        val previousGuid = if (note.id != 0L) dao.note(note.id)?.let { json.decodeFromString<Note>(it.body).guid } else null
+        val previous = if (note.id != 0L) dao.note(note.id)?.let { json.decodeFromString<Note>(it.body) } else null
+        val previousGuid = previous?.guid
         val rawGuid = note.anki?.rawJson?.let { runCatching { JSONObject(it).optString("guid") }.getOrNull() }
-        val prepared = note.copy(guid = note.guid?.takeIf { it.isNotBlank() } ?: previousGuid ?: rawGuid?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString())
+        val changed = previous == null || previous.fields != note.fields || previous.source != note.source ||
+            previous.tags != note.tags || previous.kind != note.kind || previous.deckId != note.deckId
+        val incomingMod = note.modifiedAtMillis.takeIf { it > 0 } ?: note.anki?.rawJson?.let {
+            runCatching { JSONObject(it).optLong("mod") * 1000L }.getOrNull()?.takeIf { millis -> millis > 0 }
+        } ?: 0L
+        val modified = if (importing) incomingMod else if (changed) maxOf(System.currentTimeMillis(), (previous?.modifiedAtMillis ?: 0L) + 1) else previous?.modifiedAtMillis ?: incomingMod
+        val prepared = note.copy(
+            guid = note.guid?.takeIf { it.isNotBlank() } ?: previousGuid ?: rawGuid?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+            locallyEdited = if (importing) note.locallyEdited else note.locallyEdited || previous?.locallyEdited == true || (previous?.anki != null && changed),
+            modifiedAtMillis = modified)
         val id = dao.putNote(NoteRow(prepared.id, prepared.deckId, prepared.anki?.originalId, json.encodeToString(prepared), prepared.anki?.collectionKey))
         val saved = prepared.copy(id = if (prepared.id == 0L) id else prepared.id)
         dao.putNote(NoteRow(saved.id, saved.deckId, saved.anki?.originalId, json.encodeToString(saved), saved.anki?.collectionKey))
@@ -160,7 +185,7 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
     }
 
     override suspend fun importSnapshot(snapshot: ArchiveSnapshot) = db.withTransaction {
-        require(snapshot.version == 1)
+        validateSnapshot(snapshot)
         val deckIds = mutableMapOf<Long, Long>()
         for (deck in snapshot.decks) {
             val current = dao.allDecks().firstOrNull { json.decodeFromString<Deck>(it.body).name == deck.name }
@@ -173,10 +198,30 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
             require(note.anki == null || guid.isNotBlank()) { "Anki note missing GUID: ${note.id}" }
             val current = dao.allNotes().firstOrNull { row -> json.decodeFromString<Note>(row.body).guid == guid }
             val existingModel = current?.let { json.decodeFromString<Note>(it.body).anki?.originalModelId }
-            require(existingModel == null || note.anki?.originalModelId == null || existingModel == note.anki.originalModelId) {
-                "Anki GUID/model conflict: $guid"
+            if (existingModel != null && note.anki?.originalModelId != null && existingModel != note.anki.originalModelId) {
+                val priorNote = json.decodeFromString<Note>(current!!.body)
+                val oldFields = modelFieldNames(dao.metadata("ankiCollectionJson"), existingModel)
+                val newFields = modelFieldNames(snapshot.ankiCollectionJson, note.anki.originalModelId)
+                require(priorNote.kind == note.kind && oldFields != null && oldFields == newFields) {
+                    "Anki GUID/model conflict: $guid"
+                }
             }
-            val saved = saveNote(note.copy(id = current?.id ?: 0, deckId = deckIds[note.deckId] ?: error("Missing imported deck")))
+            val priorNote = current?.let { json.decodeFromString<Note>(it.body) }
+            val incomingMod = note.modifiedAtMillis.takeIf { it > 0 } ?: note.anki?.rawJson?.let {
+                runCatching { JSONObject(it).optLong("mod") * 1000L }.getOrNull()
+            } ?: 0L
+            val incoming = note.copy(id = current?.id ?: 0, deckId = deckIds[note.deckId] ?: error("Missing imported deck"), modifiedAtMillis = incomingMod)
+            val keepLocalFields = priorNote?.locallyEdited == true && priorNote.modifiedAtMillis >= incomingMod
+            val merged = incoming.copy(
+                deckId = if (keepLocalFields) priorNote!!.deckId else incoming.deckId,
+                fields = if (keepLocalFields) priorNote!!.fields else incoming.fields,
+                source = priorNote?.source?.takeUnless { it == SourceReference() } ?: incoming.source,
+                tags = if (keepLocalFields) priorNote!!.tags else incoming.tags,
+                kind = if (keepLocalFields) priorNote!!.kind else incoming.kind,
+                locallyEdited = keepLocalFields,
+                modifiedAtMillis = if (keepLocalFields) priorNote!!.modifiedAtMillis else incomingMod,
+                anki = if (keepLocalFields) priorNote!!.anki ?: incoming.anki else incoming.anki)
+            val saved = saveNoteInternal(merged, importing = true)
             noteIds[note.id] = saved.id
         }
         val cardIds = mutableMapOf<Long, Long>()
@@ -186,7 +231,13 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
             val currentCard = current?.let { json.decodeFromString<Card>(it.body) }
             val hasLocalProgress = current != null && dao.lastLocalReview(current.id) != null
             val imported = card.copy(id = current?.id ?: 0, noteId = mappedNoteId, deckId = deckIds[card.deckId] ?: error("Missing imported deck"))
-            val saved = saveCard(if (hasLocalProgress) imported.copy(scheduling = currentCard!!.scheduling, modes = currentCard.modes) else imported)
+            val localNote = dao.note(mappedNoteId)?.let { json.decodeFromString<Note>(it.body) }
+            val saved = saveCard(imported.copy(
+                deckId = if (localNote?.locallyEdited == true) localNote.deckId else imported.deckId,
+                scheduling = if (hasLocalProgress) currentCard!!.scheduling else imported.scheduling,
+                modes = currentCard?.modes ?: imported.modes,
+                front = if (localNote?.locallyEdited == true) currentCard?.front ?: imported.front else imported.front,
+                back = if (localNote?.locallyEdited == true) currentCard?.back ?: imported.back else imported.back))
             cardIds[card.id] = saved.id
         }
         for (review in snapshot.reviews) {
@@ -208,8 +259,10 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         if (packagePaths.isNotEmpty()) dao.putMetadata(MetadataRow("originalPackagePaths", json.encodeToString(packagePaths)))
     }
 
-    override suspend fun restoreSnapshot(snapshot: ArchiveSnapshot) = db.withTransaction {
+    override suspend fun restoreSnapshot(snapshot: ArchiveSnapshot, fileRootName: String?) = db.withTransaction {
         validateSnapshot(snapshot)
+        val activeFileRoot = fileRootName ?: dao.metadata("activeFileRoot") ?: "archive-files"
+        require(activeFileRoot.matches(Regex("archive-files(?:-[0-9a-f]+)?")))
         dao.clearReviews(); dao.clearAttempts(); dao.clearCards(); dao.clearNotes(); dao.clearDecks(); dao.clearFiles(); dao.clearMetadata()
         snapshot.decks.forEach { dao.putDeck(DeckRow(it.id, it.anki?.originalId, json.encodeToString(it), it.anki?.collectionKey)) }
         snapshot.notes.forEach { dao.putNote(NoteRow(it.id, it.deckId, it.anki?.originalId, json.encodeToString(it), it.anki?.collectionKey)) }
@@ -220,37 +273,52 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         snapshot.ankiCollectionJson?.let { dao.putMetadata(MetadataRow("ankiCollectionJson", it)) }
         snapshot.originalPackagePath?.let { dao.putMetadata(MetadataRow("originalPackagePath", it)) }
         if (snapshot.originalPackagePaths.isNotEmpty()) dao.putMetadata(MetadataRow("originalPackagePaths", json.encodeToString(snapshot.originalPackagePaths)))
+        dao.putMetadata(MetadataRow("activeFileRoot", activeFileRoot))
     }
 
     override suspend fun putFile(path: String, input: InputStream, mimeType: String?): StoredFile = withContext(Dispatchers.IO) {
-        val file = safeFile(path)
-        file.parentFile?.mkdirs()
-        val temp = File(file.parentFile, file.name + ".tmp")
-        val digest = MessageDigest.getInstance("SHA-256")
-        var size = 0L
-        try {
-            temp.outputStream().use { output ->
-                val buffer = ByteArray(8192)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    digest.update(buffer, 0, count)
-                    output.write(buffer, 0, count)
-                    size += count
+        db.withTransaction {
+            val file = safeFile(path, dao.metadata("activeFileRoot") ?: "archive-files")
+            file.parentFile?.mkdirs()
+            val temp = File(file.parentFile, file.name + ".tmp")
+            val digest = MessageDigest.getInstance("SHA-256")
+            var size = 0L
+            try {
+                temp.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        digest.update(buffer, 0, count)
+                        output.write(buffer, 0, count)
+                        size += count
+                        require(size <= 512_000_000L) { "File too large" }
+                    }
                 }
-            }
-            check(temp.renameTo(file)) { "Could not store file" }
-            StoredFile(path, digest.digest().joinToString("") { "%02x".format(it) }, size, mimeType).also {
-                dao.putFile(FileRow(path, json.encodeToString(it)))
-            }
-        } finally { temp.delete() }
+                val sha = digest.digest().joinToString("") { "%02x".format(it) }
+                val current = dao.file(path)?.let { json.decodeFromString<StoredFile>(it.body) }
+                if (current != null) require(current.sha256 == sha) { "File path collision: $path" }
+                if (file.exists()) {
+                    if (current == null) try {
+                        Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                    } catch (_: AtomicMoveNotSupportedException) {
+                        Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    }
+                } else check(temp.renameTo(file)) { "Could not store file" }
+                StoredFile(path, sha, size, mimeType).also {
+                    dao.putFile(FileRow(path, json.encodeToString(it)))
+                }
+            } finally { temp.delete() }
+        }
     }
 
     override suspend fun openFile(path: String): InputStream? = withContext(Dispatchers.IO) {
-        if (dao.file(path) == null) null else safeFile(path).takeIf { it.isFile }?.inputStream()
+        if (dao.file(path) == null) null else safeFile(path, dao.metadata("activeFileRoot") ?: "archive-files").takeIf { it.isFile }?.inputStream()
     }
 
-    internal fun safeFile(path: String): File {
+    private fun safeFile(path: String, rootName: String): File {
+        require(rootName.matches(Regex("archive-files(?:-[0-9a-f]+)?")))
+        val blobRoot = File(context.filesDir, rootName)
         require(path.isNotBlank() && !path.startsWith('/') && path.split('/').none { it.isBlank() || it == "." || it == ".." || '\\' in it })
         val target = File(blobRoot, path).canonicalFile
         require(target.path.startsWith(blobRoot.canonicalPath + File.separator))
@@ -258,9 +326,17 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
     }
 }
 
+private fun modelFieldNames(collectionJson: String?, modelId: Long): List<String>? = runCatching {
+    val fields = JSONObject(collectionJson ?: return null).optJSONObject("models")
+        ?.optJSONObject(modelId.toString())?.optJSONArray("flds") ?: return null
+    (0 until fields.length()).map { fields.optJSONObject(it)?.optString("name").orEmpty() }
+}.getOrNull()
+
 fun validateSnapshot(snapshot: ArchiveSnapshot) {
     require(snapshot.version == 1) { "Unsupported backup version" }
     fun <T> unique(values: List<T>) { require(values.size == values.toSet().size) { "Duplicate IDs" } }
+    require(snapshot.decks.all { it.id > 0 } && snapshot.notes.all { it.id > 0 } && snapshot.cards.all { it.id > 0 })
+    require(snapshot.attempts.all { it.id > 0 } && snapshot.reviews.all { it.id > 0 })
     unique(snapshot.decks.map { it.id }); unique(snapshot.notes.map { it.id }); unique(snapshot.cards.map { it.id })
     unique(snapshot.attempts.map { it.id }); unique(snapshot.reviews.map { it.id }); unique(snapshot.files.map { it.path })
     val decks = snapshot.decks.map { it.id }.toSet()
@@ -272,5 +348,13 @@ fun validateSnapshot(snapshot: ArchiveSnapshot) {
     require(snapshot.attempts.all { it.cardId in cards })
     require(snapshot.reviews.all { it.cardId in cards && (it.attemptId == null || it.attemptId in attempts) })
     require(snapshot.reviews.mapNotNull { it.attemptId }.distinct().size == snapshot.reviews.count { it.attemptId != null })
+    val attemptCards = snapshot.attempts.associate { it.id to it.cardId }
+    require(snapshot.reviews.all { it.attemptId == null || attemptCards[it.attemptId] == it.cardId })
+    val reviewedIds = snapshot.reviews.mapNotNull { it.attemptId }.toSet()
+    require(snapshot.attempts.all { (it.state == AttemptState.REVIEWED) == (it.id in reviewedIds) })
     require(snapshot.files.all { it.path.isNotBlank() && !it.path.startsWith('/') && it.path.split('/').none { segment -> segment.isBlank() || segment == "." || segment == ".." || '\\' in segment } })
+    require(snapshot.files.all { it.size >= 0 && it.sha256.matches(Regex("[0-9a-f]{64}")) })
+    val files = snapshot.files.map { it.path }.toSet()
+    require(snapshot.originalPackagePath == null || snapshot.originalPackagePath in files)
+    require(snapshot.originalPackagePaths.all { it in files })
 }
