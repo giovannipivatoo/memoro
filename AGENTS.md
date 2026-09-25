@@ -7,6 +7,8 @@ Usare agenti GPT-6 Sol, nominati data, anki, ui, coordinati dal root. Gli agenti
 
 Un proprietario delle scritture per area come in ARCHITECTURE.md. Tutti condividono il worktree: non cambiare branch, fare checkout, commit o push autonomamente mentre lavorano altri agenti. Il coordinatore gestisce branch feature, stage esplicito per owner, commit coerenti, review e push; integra solo dopo i controlli. Non sovrascrivere cambi altrui. Proporre modifiche ai contratti prima di applicarle e notificare la versione finale.
 
+Il coordinatore esegue anche Gradle e i comandi su emulatore/dispositivo: build e test strumentali concorrenti possono interferire con l'installazione e cancellare i dati della verifica. Gli agenti preparano test e comunicano i comandi necessari; non avviano autonomamente questi strumenti. I test Android usano un emulatore dedicato e dati sintetici. I comandi di verifica sono in README.md.
+
 ## Consegna di ogni agente
 Elencare requisiti implementati, file posseduti, test eseguiti con risultati, feedback ricevuto e limiti ancora reali. Niente stub spacciati per implementazione, downgrade di compatibilità non concordati, segreti o dati personali nel repository.
 
