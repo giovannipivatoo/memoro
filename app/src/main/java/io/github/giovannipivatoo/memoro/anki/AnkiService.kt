@@ -45,10 +45,12 @@ class AnkiService(private val context: Context) {
                 val warnings = mutableListOf<String>()
                 val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
                 try {
+                    db.rawQuery("PRAGMA quick_check", null).use { require(it.moveToFirst() && it.getString(0) == "ok") { "Database Anki danneggiato" } }
                     val col = db.query("col", null, null, null, null, null, null).use { if (it.moveToFirst()) row(it) else error("Collezione vuota") }
                     val crt = col.optLong("crt") ?: 0
-                    val sourceDecks = if (modern) modernDecks(db) else jsonObject(col.optString("decks"))
-                    val sourceModels = if (modern) modernModels(db) else jsonObject(col.optString("models"))
+                    val modernDatabase = col.optInt("ver") >= 18
+                    val sourceDecks = if (modernDatabase) modernDecks(db) else jsonObject(col.optString("decks"))
+                    val sourceModels = if (modernDatabase) modernModels(db) else jsonObject(col.optString("models"))
                     val prior = jsonObject(repository.snapshot().ankiCollectionJson)
                     val (deckDefs, deckIds) = mergeDefinitions(prior.optJSONObject("decks"), sourceDecks, "name")
                     val (modelDefs, modelIds) = mergeDefinitions(prior.optJSONObject("models"), sourceModels, "name")
@@ -86,7 +88,8 @@ class AnkiService(private val context: Context) {
                         }
                         val templates = model?.optJSONArray("tmpls")
                         if (templates != null && !standardTemplate(kind, templates)) warnings += "Nota ${raw.optLong("id")}: template personalizzato conservato nell'originale; anteprima semplificata"
-                        Note(id = raw.optLong("id"), deckId = did, guid = raw.optString("guid"), kind = kind, fields = fields,
+                        Note(id = raw.optLong("id"), deckId = did, guid = raw.optString("guid"),
+                            modifiedAtMillis = raw.optLong("mod") * 1000, kind = kind, fields = fields,
                             tags = raw.optString("tags").trim().split(Regex("\\s+")).filter(String::isNotEmpty),
                             anki = AnkiMetadata(originalId = raw.optLong("id"), packageSha256 = digest, originalModelId = mid, rawJson = raw.toString()))
                     }
@@ -153,15 +156,19 @@ class AnkiService(private val context: Context) {
         val names = if (modern) AnkiWire.decodeMediaMap(raw) else {
             val map = jsonObject(raw.toString(Charsets.UTF_8)); map.keys().asSequence().mapNotNull { key -> key.toIntOrNull()?.let { it to map.optString(key) } }.toMap()
         }
+        require(names.size <= MAX_MEDIA_COUNT) { "Troppi media nell'archivio" }
         val files = mutableListOf<StoredFile>()
         val renamed = mutableMapOf<String, String>()
         val existing = repository.snapshot().files.associateBy(StoredFile::path)
+        var total = 0L
         for ((index, name) in names) {
             if (!safeMediaName(name)) { warnings += "Media rifiutato: nome non sicuro"; continue }
             val mediaEntry = zip.getEntry(index.toString())
             if (mediaEntry == null) { warnings += "Media mancante: $name"; continue }
             if (mediaEntry.size > MAX_MEDIA_BYTES) { warnings += "Media troppo grande: $name"; continue }
             val bytes = zip.getInputStream(mediaEntry).use { input -> (if (modern) ZstdInputStream(input) else input).use { it.readBytesLimited(MAX_MEDIA_BYTES) } }
+            total += bytes.size
+            require(total <= MAX_TOTAL_MEDIA_BYTES) { "Media complessivi troppo grandi" }
             val sha = hash(bytes.inputStream())
             val path = "media/$name"
             val storedPath = if (existing[path] != null && existing[path]?.sha256 != sha) {
@@ -270,18 +277,32 @@ class AnkiService(private val context: Context) {
         }
     }
 
-    private fun standardTemplate(kind: NoteKind, templates: JSONArray): Boolean = kind == NoteKind.CLOZE ||
+    private fun standardTemplate(kind: NoteKind, templates: JSONArray): Boolean =
         (templates.length() <= 2 && (0 until templates.length()).all { i ->
             val t = templates.optJSONObject(i) ?: return@all false
-            val q = t.optString("qfmt"); val a = t.optString("afmt")
-            val expectedQuestion = if (kind == NoteKind.REVERSE && i == 1) "{{Back}}" else "{{Front}}"
-            expectedQuestion in q && ("{{Back}}" in a || "{{Front}}" in a || "{{FrontSide}}" in a)
+            val q = t.optString("qfmt").replace(Regex("\\s+"), "")
+            val a = t.optString("afmt").replace(Regex("\\s+"), "")
+                .replace(Regex("<hr(?:id=['\"]?answer['\"]?)?/?>", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("<br/?>", RegexOption.IGNORE_CASE), "")
+            val expectedQuestion = when {
+                kind == NoteKind.CLOZE -> "{{cloze:Text}}"
+                kind == NoteKind.REVERSE && i == 1 -> "{{Back}}"
+                else -> "{{Front}}"
+            }
+            val expectedAnswer = when {
+                kind == NoteKind.CLOZE -> "{{cloze:Text}}{{BackExtra}}"
+                kind == NoteKind.REVERSE && i == 1 -> "{{FrontSide}}{{Front}}"
+                else -> "{{FrontSide}}{{Back}}"
+            }
+            q == expectedQuestion && a == expectedAnswer
         })
 
     companion object {
         const val MAX_DATABASE_BYTES = 512L * 1024 * 1024
         const val MAX_MEDIA_BYTES = 64L * 1024 * 1024
         const val MAX_MEDIA_MAP_BYTES = 16L * 1024 * 1024
+        const val MAX_TOTAL_MEDIA_BYTES = 512L * 1024 * 1024
+        const val MAX_MEDIA_COUNT = 10000
     }
 }
 
