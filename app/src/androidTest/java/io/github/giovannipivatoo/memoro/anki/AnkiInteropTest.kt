@@ -98,10 +98,34 @@ class AnkiInteropTest {
             val out = app.getExternalFilesDir(null)!!.resolve("memoro-mixed-oracle.apkg")
             out.outputStream().use { service.exportApkg(it, repo) }
             assertTrue(out.length() > 100)
-            val snapshot = repo.snapshot()
-            assertEquals(6, snapshot.notes.size)
-            assertEquals(9, snapshot.cards.size)
-            assertEquals(2, snapshot.reviews.size)
+            val before = repo.snapshot()
+            assertEquals(6, before.notes.size)
+            assertEquals(9, before.cards.size)
+            assertEquals(2, before.reviews.size)
+            out.inputStream().use { service.importApkg(it, repo) }
+            val after = repo.snapshot()
+            assertEquals(before.notes.size, after.notes.size)
+            assertEquals(before.cards.size, after.cards.size)
+            assertEquals(before.reviews.size, after.reviews.size)
+            assertEquals(before.attempts, after.attempts)
+        } finally { repo.close() }
+    }
+
+    @Test fun nativeOnlyExportsLegacyPackageAndReimportsWithoutDuplicates() = runBlocking {
+        app.deleteDatabase("memoro.db")
+        val repo = RoomMemoroRepository.open(app)
+        try {
+            val deck = repo.saveDeck(Deck(name = "Native legacy"))
+            repo.saveNote(Note(deckId = deck.id, kind = NoteKind.BASIC, fields = listOf("One", "Uno")))
+            repo.saveNote(Note(deckId = deck.id, kind = NoteKind.REVERSE, fields = listOf("Two", "Due")))
+            repo.saveNote(Note(deckId = deck.id, kind = NoteKind.CLOZE, fields = listOf("{{c1::Three}}", "Tre")))
+            val service = AnkiService(app)
+            val out = app.getExternalFilesDir(null)!!.resolve("memoro-native-legacy.apkg")
+            out.outputStream().use { service.exportApkg(it, repo) }
+            ZipFile(out).use { assertNotNull(it.getEntry("collection.anki21")) }
+            out.inputStream().use { service.importApkg(it, repo) }
+            assertEquals(3, repo.snapshot().notes.size)
+            assertEquals(4, repo.snapshot().cards.size)
         } finally { repo.close() }
     }
 }

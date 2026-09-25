@@ -5,6 +5,7 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.Index
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
@@ -15,7 +16,7 @@ import kotlinx.coroutines.flow.Flow
 @Entity(tableName = "notes") data class NoteRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val deckId: Long, val ankiId: Long? = null, val body: String, val collectionKey: String? = null)
 @Entity(tableName = "cards") data class CardRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val deckId: Long, val noteId: Long, val ankiId: Long? = null, val dueAtMillis: Long, val importedQueue: Int? = null, val archived: Boolean = false, val body: String, val collectionKey: String? = null)
 @Entity(tableName = "attempts") data class AttemptRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val cardId: Long, val state: String, val body: String)
-@Entity(tableName = "reviews") data class ReviewRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val attemptId: Long? = null, val cardId: Long, val ankiId: Long? = null, val reviewedAtMillis: Long, val body: String, val collectionKey: String? = null)
+@Entity(tableName = "reviews", indices = [Index(value = ["attemptId"], unique = true)]) data class ReviewRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val attemptId: Long? = null, val cardId: Long, val ankiId: Long? = null, val reviewedAtMillis: Long, val body: String, val collectionKey: String? = null)
 @Entity(tableName = "files") data class FileRow(@PrimaryKey val path: String, val body: String)
 @Entity(tableName = "metadata") data class MetadataRow(@PrimaryKey val key: String, val value: String)
 

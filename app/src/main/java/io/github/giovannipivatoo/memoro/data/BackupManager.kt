@@ -18,7 +18,6 @@ import kotlinx.serialization.json.Json
 class BackupManager(context: Context, private val repository: MemoroRepository) {
     private val app = context.applicationContext
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
-    private val root = File(app.filesDir, "archive-files")
 
     suspend fun export(output: OutputStream) = withContext(Dispatchers.IO) {
         val snapshot = repository.snapshot()
@@ -82,18 +81,18 @@ class BackupManager(context: Context, private val repository: MemoroRepository) 
             // Keep an on-device copy before changing either storage layer.
             val preventive = File(app.filesDir, "pre-restore-${System.currentTimeMillis()}.memoro.zip")
             preventive.outputStream().use { export(it) }
-            val oldFiles = File(app.filesDir, "archive-files-before-restore")
-            if (oldFiles.exists()) oldFiles.deleteRecursively()
-            val hadOld = root.exists()
-            if (hadOld) check(root.renameTo(oldFiles))
+            // A new immutable file generation is ready before Room switches the
+            // active pointer. Process death leaves the database referencing either
+            // the complete old generation or the complete new one.
+            val generationName = "archive-files-${java.util.UUID.randomUUID().toString().replace("-", "")}"
+            val generation = File(app.filesDir, generationName)
             val newFiles = File(staging, "files")
             try {
-                if (newFiles.exists()) check(newFiles.renameTo(root)) else check(root.mkdirs())
-                repository.restoreSnapshot(snapshot)
-                oldFiles.deleteRecursively()
+                if (newFiles.exists()) check(newFiles.renameTo(generation)) else check(generation.mkdirs())
+                repository.restoreSnapshot(snapshot, generationName)
             } catch (failure: Throwable) {
-                root.deleteRecursively()
-                if (hadOld) oldFiles.renameTo(root)
+                // Cancellation may arrive after Room commits but before this call
+                // returns. Keeping a complete generation is safe in either case.
                 throw failure
             }
             preventive

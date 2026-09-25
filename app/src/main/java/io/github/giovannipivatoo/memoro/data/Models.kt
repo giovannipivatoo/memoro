@@ -42,6 +42,8 @@ import kotlinx.serialization.Serializable
     val fields: List<String>,
     val source: SourceReference = SourceReference(),
     val tags: List<String> = emptyList(),
+    val locallyEdited: Boolean = false,
+    val modifiedAtMillis: Long = 0,
     val anki: AnkiMetadata? = null,
 )
 

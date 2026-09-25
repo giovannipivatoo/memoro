@@ -59,6 +59,8 @@ class Fsrs6Test {
             Vector(Rating.EASY, 23.88306407915667, 1.0, 24 * 86_400_000L),
         )
         for (vector in overdue) checkVector(Fsrs6.review(first, vector.rating, start + 3 * 86_400_000L), vector, start + 3 * 86_400_000L)
+        checkVector(Fsrs6.review(first, Rating.GOOD, start + 3 * 86_400_000L + 43_200_000L),
+            overdue[2], start + 3 * 86_400_000L + 43_200_000L)
     }
 
     private data class Vector(val rating: Rating, val stability: Double, val difficulty: Double, val delay: Long)
