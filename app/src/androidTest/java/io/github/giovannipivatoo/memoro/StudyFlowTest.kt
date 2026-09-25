@@ -55,8 +55,13 @@ class StudyFlowTest {
         waitTag("answerInput")
     }
 
-    private fun waitTag(tag: String) = compose.waitUntil(10_000) {
-        compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+    private fun waitTag(tag: String) {
+        try {
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+        } catch (error: ComposeTimeoutException) {
+            val attempts = runBlocking { repo.snapshot().attempts }.map { "${it.mode}/${it.state}" }
+            throw AssertionError("Missing $tag; attempts=$attempts\n${compose.onRoot().printToString()}", error)
+        }
     }
 
     private fun capture(name: String) {
