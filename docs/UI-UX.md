@@ -41,3 +41,11 @@ Il dettaglio mazzo offre sempre Ripasso libero quando contiene carte attive. I r
 ## Verifica
 
 I test coprono ripasso globale su due mazzi, isolamento della risposta tra carte, uscita protetta dall'editor, bozze, rettifica, ricreazione dell'Activity e impostazione del pet. Gli screenshot in [screenshots](screenshots/) provengono dall'app Android su emulatore con dati sintetici. Risultati e limiti sono registrati in [ACCEPTANCE.md](../ACCEPTANCE.md).
+
+## Icona launcher (v0.3.1)
+
+Il volto di 罗小黑 è ridisegnato come vettore Android: testa nera inclinata, grandi anelli color crema e interno dell’orecchio salvia. Lo sfondo usa il colore principale chiaro di Memoro. Il pet animato conserva i suoi fotogrammi originali.
+
+Foreground e sfondo sono separati in un’icona adattiva 108dp; il soggetto rimane nella zona centrale protetta. Il livello monocromatico usa anelli trasparenti e pupille piene, così il volto resta riconoscibile con le icone a tema. Implementazione conforme alla [documentazione Android sulle icone adattive](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive).
+
+[Anteprima delle forme e dei temi](screenshots/icon-variants.png), render delle stesse geometrie vettoriali; [icona nel launcher Android](screenshots/launcher-icon.png), screenshot dall’APK su API 36.

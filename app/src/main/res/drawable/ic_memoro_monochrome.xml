@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: BSD-2-Clause -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:rotation="9" android:pivotX="54" android:pivotY="54">
+        <!-- Eye rings are transparent so they survive a single system tint. -->
+        <path android:fillColor="#000000" android:fillType="evenOdd"
+            android:pathData="M30,43C29,37 31,29 35,26Q37,24 40,28L47,35Q55,33 63,36Q73,30 79,33Q82,35 78,48Q82,56 78,65C75,74 66,79 54,79C40,79 30,72 28,61Q25,51 30,43Z M31,55a10.5,15 0,1 0,21 0a10.5,15 0,1 0,-21 0 M54,56a12,16 0,1 0,24 0a12,16 0,1 0,-24 0 M36,55a5.5,10.5 0,1 0,11 0a5.5,10.5 0,1 0,-11 0 M59.5,56a6.5,11.5 0,1 0,13 0a6.5,11.5 0,1 0,-13 0" />
+    </group>
+</vector>

@@ -76,3 +76,7 @@ Risultati dei file effettivamente estratti dall'emulatore, senza modificarli:
 L'oracle confronta GUID e campi, identità carta per GUID+ordinale+mazzo, coda/tipo/scadenza/intervallo/ripetizioni/lapsi, timestamp e voti revlog, hash dei byte multimediali. I conteggi da soli non costituiscono la verifica. Nuove esecuzioni generano ID, GUID e timestamp nuovi: gli hash della tabella identificano questa specifica esecuzione.
 
 I limiti supportati sono in [README.md](README.md): template semplificati, preset avanzati non riprodotti integralmente, stima FSRS quando lo stato importato manca, orologi dei dispositivi, spazio di generazioni/orfani, chiave e preferenze escluse dal backup. Nessuna prova simulata è presentata come chiamata DeepSeek reale.
+
+## Patch icona v0.3.1
+
+Modifiche all’app limitate a icona, manifest e numero di versione. I test di studio chiudono la tastiera prima del tap per evitare che la transizione IME sposti il pulsante durante il click automatico. `lintDebug assembleDebug` completati, senza errori e con gli stessi 17 warning della v0.3. Verifica visiva delle geometrie rotonde/arrotondate e monocromatiche; APK installato come aggiornamento e [icona verificata nel launcher API 36](docs/screenshots/launcher-icon.png). Nessuna modifica a studio, dati o compatibilità Anki.
