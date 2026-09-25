@@ -27,27 +27,40 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import io.github.giovannipivatoo.memoro.ai.DeepSeekClient
+import io.github.giovannipivatoo.memoro.ai.EvaluationInput
+import io.github.giovannipivatoo.memoro.ai.EvaluationResult
+import io.github.giovannipivatoo.memoro.ai.Verdict
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private data class ArchiveResult(val title: String, val details: String)
 
 @Composable
-internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
+internal fun SettingsScreen(actions: AppActions, ai: DeepSeekClient, onMessage: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val initialStatus = remember { runCatching { actions.apiKey() }.fold(
         onSuccess = { (it.isNotBlank() to null) },
-        onFailure = { false to (it.message ?: "Chiave non disponibile") },
+        onFailure = { false to "Chiave non disponibile. Rimuovila e inseriscila di nuovo." },
     ) }
     var configured by remember { mutableStateOf(initialStatus.first) }
     var keyIssue by remember { mutableStateOf(initialStatus.second) }
     var key by remember { mutableStateOf("") }
     var showKey by remember { mutableStateOf(false) }
     var model by remember { mutableStateOf(actions.model()) }
+    var verification by rememberSaveable { mutableStateOf<String?>(null) }
+    var verified by rememberSaveable { mutableStateOf(false) }
+    var verifying by remember { mutableStateOf(false) }
     var pet by remember { mutableStateOf(actions.petEnabled()) }
     var apiExpanded by rememberSaveable { mutableStateOf(false) }
     var modelExpanded by rememberSaveable { mutableStateOf(false) }
@@ -95,7 +108,7 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
             SettingsSection("Correzione AI", "Facoltativa · usata solo quando invii una risposta") {
                 Row(Modifier.fillMaxWidth().clickable { apiExpanded = !apiExpanded }, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (keyIssue != null) "Da riconfigurare" else if (configured) "Configurata" else "Da configurare", style = MaterialTheme.typography.titleMedium,
+                        Text(if (keyIssue != null) "Da riconfigurare" else if (configured) "Chiave salvata" else "Da configurare", style = MaterialTheme.typography.titleMedium,
                             color = if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                         Text("La chiave resta su questo dispositivo.", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -106,11 +119,11 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
                 if (apiExpanded) {
                     Spacer(Modifier.height(12.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
                     keyIssue?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error); Spacer(Modifier.height(8.dp)) }
-                    Text("Invii solo la carta e la risposta quando tocchi Invia risposta. I link fonte non vengono letti automaticamente.",
+                    Text("Durante lo studio invii solo la carta e la risposta quando tocchi Invia risposta. I link fonte non vengono letti automaticamente.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
-                        value = key, onValueChange = { key = it },
+                        value = key, onValueChange = { key = it; verification = null },
                         label = { Text("Chiave API personale") },
                         placeholder = { Text(if (configured) "Inserisci una nuova chiave per sostituirla" else "Inserisci la chiave") },
                         visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
@@ -118,7 +131,8 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
                             Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                 contentDescription = if (showKey) "Nascondi chiave" else "Mostra chiave")
                         } },
-                        singleLine = true, modifier = Modifier.fillMaxWidth().testTag("apiKey"),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                        singleLine = true, enabled = !verifying, modifier = Modifier.fillMaxWidth().testTag("apiKey"),
                     )
                     TextButton(onClick = { modelExpanded = !modelExpanded }) {
                         Text("Modello avanzato")
@@ -126,20 +140,54 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
                         Icon(if (modelExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
                     }
                     if (modelExpanded) OutlinedTextField(
-                        value = model, onValueChange = { model = it }, label = { Text("Modello DeepSeek") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth().testTag("modelName"),
+                        value = model, onValueChange = { model = it; verification = null }, label = { Text("Modello DeepSeek") },
+                        singleLine = true, enabled = !verifying, modifier = Modifier.fillMaxWidth().testTag("modelName"),
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
+                        Button(enabled = !verifying, onClick = {
                             try {
                                 if (key.isNotBlank()) { actions.saveApiKey(key.trim()); configured = true; keyIssue = null; key = "" }
                                 actions.saveModel(model.trim().ifBlank { "deepseek-flash" })
+                                verification = null
                                 onMessage("Impostazioni AI salvate")
-                            } catch (e: Exception) { onMessage(e.message ?: "Impostazioni non salvate") }
+                            } catch (_: Exception) { onMessage("Impostazioni AI non salvate. Riprova.") }
                         }, modifier = Modifier.testTag("saveSettings")) { Text("Salva") }
-                        if (configured || keyIssue != null) TextButton(onClick = { pendingRemoveKey = true }) { Text("Rimuovi chiave") }
+                        if (configured || keyIssue != null) TextButton(enabled = !verifying, onClick = { pendingRemoveKey = true }) { Text("Rimuovi chiave") }
                     }
+                    Spacer(Modifier.height(12.dp))
+                    Text("La prova invia solo l'esempio fittizio «capitale d'Italia / Roma» a DeepSeek. Può consumare una piccola quota API.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val unsaved = key.isNotBlank() || model.trim().ifBlank { "deepseek-flash" } != actions.model()
+                    OutlinedButton(enabled = configured && keyIssue == null && !unsaved && !verifying, onClick = {
+                        verifying = true
+                        verification = null
+                        scope.launch {
+                            try {
+                                val result = ai.evaluate(EvaluationInput("Qual è la capitale d'Italia?", "Roma", "Roma"), actions.apiKey(), actions.model())
+                                when (result) {
+                                    is EvaluationResult.Success -> {
+                                        verified = true
+                                        val verdict = when (result.evaluation.verdict) {
+                                            Verdict.CORRECT -> "corretta"
+                                            Verdict.PARTIAL -> "parziale"
+                                            Verdict.WRONG -> "errata"
+                                            Verdict.UNGRADABLE -> "non valutabile"
+                                        }
+                                        verification = "DeepSeek funziona. L'esempio è stato valutato: $verdict."
+                                    }
+                                    is EvaluationResult.Failure -> { verified = false; verification = result.message }
+                                }
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { verified = false; verification = "Verifica non riuscita. La chiave resta salvata; riprova." }
+                            finally { verifying = false }
+                        }
+                    }, modifier = Modifier.testTag("testDeepSeek")) { Text(if (verifying) "Verifica in corso…" else "Prova correzione") }
+                    if (unsaved) Text("Salva prima la chiave e il modello per provarli.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    verification?.let { Text(it, style = MaterialTheme.typography.bodyMedium,
+                        color = if (verified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("deepSeekStatus")) }
                 }
             }
         }
@@ -180,8 +228,8 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
         onDismissRequest = { pendingRemoveKey = false }, title = { Text("Rimuovere la chiave API?") },
         text = { Text("Potrai inserirne una nuova in qualsiasi momento.") },
         confirmButton = { TextButton(onClick = {
-            try { actions.saveApiKey(""); configured = false; keyIssue = null; key = ""; onMessage("Chiave rimossa") }
-            catch (e: Exception) { onMessage(e.message ?: "Chiave non rimossa") }
+            try { actions.saveApiKey(""); configured = false; keyIssue = null; key = ""; verification = null; onMessage("Chiave rimossa") }
+            catch (_: Exception) { onMessage("Chiave non rimossa. Riprova.") }
             pendingRemoveKey = false
         }) { Text("Rimuovi") } },
         dismissButton = { TextButton(onClick = { pendingRemoveKey = false }) { Text("Annulla") } },

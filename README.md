@@ -44,7 +44,9 @@ I test strumentali usano dati sintetici e possono sostituire l'archivio dell'app
 
 In **Impostazioni** puoi attivare il gattino, importare/esportare `.apkg`, creare un backup o ripristinarlo. La conferma di ripristino sostituisce l'archivio dopo la validazione e conserva sul dispositivo una copia preventiva. Per spostare anche fonti, tentativi e feedback usa il backup Memoro: questi dati aggiuntivi non fanno parte del formato Anki.
 
-Per la correzione AI salva la tua chiave DeepSeek e il modello nelle impostazioni. La chiave è protetta da Android Keystore e non entra nel backup. Solo un invio esplicito in modalità AI trasmette domanda, riferimento, risposta e l'eventuale estratto fonte a DeepSeek. Non vengono caricati mazzi interi o file; gli URL della fonte sono metadati e non vengono aperti. Senza chiave o rete puoi usare l'autovalutazione. La prova con una chiave reale resta da effettuare; i test automatici usano un server simulato.
+Per la correzione AI apri **Impostazioni → Correzione AI**, inserisci la chiave DeepSeek e tocca **Salva**. Il modello predefinito è `deepseek-flash`; puoi cambiarlo in **Modello avanzato**. **Prova correzione** invia un esempio fisso, senza leggere i tuoi mazzi, per verificare chiave, modello e risposta dell'API. La prova è una normale chiamata API e consuma token. Il solo salvataggio della chiave non invia richieste.
+
+La chiave è protetta da Android Keystore e non entra nell'APK, nel repository o nel backup. Nello studio, solo un invio esplicito in modalità AI trasmette domanda, riferimento, risposta e l'eventuale estratto fonte a DeepSeek. Non vengono caricati mazzi interi o file; gli URL della fonte sono metadati e non vengono aperti. Senza chiave, credito o rete puoi usare l'autovalutazione; un errore API conserva la bozza e non conta come risposta errata. I test automatici usano risposte simulate, senza chiavi reali. Le prove reali sono registrate in [ACCEPTANCE.md](ACCEPTANCE.md).
 
 ## Compatibilità e limiti della v0.3
 

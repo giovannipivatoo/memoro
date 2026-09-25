@@ -125,7 +125,7 @@ fun MemoroApp(repo: MemoroRepository, actions: AppActions, ai: DeepSeekClient = 
                 is Page.NoteEditor -> NoteEditorScreen(repo, current.deckId, current.noteId, onDirtyChange = { editorDirty = it }, onDone = { editorDirty = false; page = Page.DeckDetail(current.deckId) }, onError = ::showError)
                 is Page.Study -> StudyScreen(repo, current.deckId, ai, actions.apiKey, actions.model, actions.petEnabled(), onError = ::showError, onDone = { page = current.deckId?.let { Page.DeckDetail(it) } ?: Page.Decks }, practice = current.practice)
                 Page.History -> HistoryScreen(repo)
-                Page.Settings -> SettingsScreen(actions, onMessage = ::showError)
+                Page.Settings -> SettingsScreen(actions, ai, onMessage = ::showError)
             }
         }
     }
