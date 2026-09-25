@@ -1,6 +1,5 @@
 package io.github.giovannipivatoo.memoro
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -10,6 +9,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.giovannipivatoo.memoro.data.*
 import io.github.giovannipivatoo.memoro.ui.AppActions
 import io.github.giovannipivatoo.memoro.ui.MemoroApp
+import io.github.giovannipivatoo.memoro.ui.MemoroTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -43,7 +43,7 @@ class StudyFlowTest {
         val actions = AppActions(apiKey = { "" }, saveApiKey = {}, model = { "deepseek-flash" },
             saveModel = {}, petEnabled = { pet }, savePetEnabled = {}, importApkg = { "" },
             exportApkg = { "" }, backup = { "" }, restore = { "" })
-        val content: @Composable () -> Unit = { MaterialTheme { MemoroApp(repo, actions) } }
+        val content: @Composable () -> Unit = { MemoroTheme { MemoroApp(repo, actions) } }
         if (restoration == null) compose.setContent(content) else restoration.setContent(content)
     }
 
@@ -69,7 +69,8 @@ class StudyFlowTest {
         compose.onNodeWithTag("referenceAnswer").assertTextContains("Roma")
         compose.onNodeWithText("Esito automatico: Errata").performScrollTo().assertIsDisplayed()
         assertEquals(0, runBlocking { repo.snapshot().reviews.size })
-        compose.onNodeWithText("Corretta", useUnmergedTree = true).performScrollTo().performClick()
+        compose.onNodeWithText("Modifica esito").performScrollTo().performClick()
+        compose.onNodeWithText("Corretta").performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().attempts.any { it.finalOutcome == Outcome.CORRECT } } }
         compose.onNodeWithTag("rate-GOOD").performScrollTo().performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 1 } }
@@ -115,7 +116,7 @@ class StudyFlowTest {
         waitTag("noteFront")
         compose.onNodeWithTag("noteFront").performTextInput("Quanto fa 2 + 2?")
         compose.onNodeWithTag("noteBack").performScrollTo().performTextInput("4")
-        compose.onNodeWithTag("saveNote").performScrollTo().performClick()
+        compose.onNodeWithTag("saveNote").performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().notes.size == 2 } }
         val note = runBlocking { repo.snapshot().notes.last() }
         assertEquals(listOf("Quanto fa 2 + 2?", "4"), note.fields)
@@ -128,7 +129,8 @@ class StudyFlowTest {
         compose.onNodeWithTag("answerInput").performTextInput("Rmoa")
         compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
         waitTag("referenceAnswer")
-        compose.onNodeWithText("Corretta", useUnmergedTree = true).performScrollTo().performClick()
+        compose.onNodeWithText("Modifica esito").performScrollTo().performClick()
+        compose.onNodeWithText("Corretta").performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().attempts.any { it.finalOutcome == Outcome.CORRECT } } }
         restoration.emulateSavedInstanceStateRestore()
         waitTag("referenceAnswer")
@@ -136,5 +138,52 @@ class StudyFlowTest {
         compose.onNodeWithTag("rate-EASY").performScrollTo().performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 1 } }
         assertEquals(Outcome.CORRECT, runBlocking { repo.snapshot().attempts.single().finalOutcome })
+    }
+
+    @Test fun homeReviewIncludesEveryDeckAndDoesNotCarryAnswersAcrossCards() {
+        runBlocking {
+            val secondDeck = repo.saveDeck(Deck(name = "Scienze di prova"))
+            repo.saveNote(Note(deckId = secondDeck.id, fields = listOf("Pianeta che abitiamo?", "Terra")))
+            repo.snapshot().cards.forEach { repo.saveCard(it.copy(modes = setOf(AnswerMode.EXACT))) }
+        }
+        setApp()
+        waitTag("startReview")
+        compose.onNodeWithTag("startReview").performClick()
+        waitTag("answerInput")
+        compose.onNodeWithText("Impostazioni").assertDoesNotExist()
+        compose.onNodeWithTag("answerInput").performTextInput("Prima risposta")
+        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        waitTag("referenceAnswer")
+        compose.onNodeWithTag("rate-GOOD").performScrollTo().performClick()
+        compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 1 } }
+        waitTag("answerInput")
+        compose.onNodeWithTag("referenceAnswer").assertDoesNotExist()
+        assertEquals("", compose.onNodeWithTag("answerInput").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text)
+        compose.onNodeWithTag("answerInput").performTextInput("Seconda risposta")
+        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        waitTag("referenceAnswer")
+        compose.onNodeWithTag("rate-GOOD").performScrollTo().performClick()
+        compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 2 } }
+        val snapshot = runBlocking { repo.snapshot() }
+        assertEquals(2, snapshot.reviews.map { it.cardId }.distinct().size)
+        assertEquals(setOf("Prima risposta", "Seconda risposta"), snapshot.attempts.map { it.answer }.toSet())
+    }
+
+    @Test fun leavingUnsavedEditorRequiresAnExplicitChoice() {
+        setApp()
+        waitTag("deck-$deckId")
+        compose.onNodeWithTag("deck-$deckId").performClick()
+        compose.onNodeWithTag("addNote").performClick()
+        waitTag("noteFront")
+        compose.onNodeWithTag("noteFront").performTextInput("Da conservare")
+        compose.onNodeWithContentDescription("Indietro").performClick()
+        compose.onNodeWithText("Scartare le modifiche?").assertIsDisplayed()
+        compose.onNodeWithText("Continua a modificare").performClick()
+        compose.onNodeWithTag("noteFront").assertTextContains("Da conservare")
+        compose.onNodeWithContentDescription("Indietro").performClick()
+        compose.onNodeWithText("Scarta").performClick()
+        waitTag("studyDeck")
+        assertEquals(1, runBlocking { repo.snapshot().notes.size })
     }
 }
