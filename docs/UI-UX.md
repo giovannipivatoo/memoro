@@ -26,13 +26,17 @@ Le pagine e le immagini ufficiali sono state consultate come riferimento. Nessun
 
 ## Gattino
 
-[Asset PNG trasparente](../app/src/main/res/drawable-nodpi/memoro_cat.png), generato con lo strumento ImageGen a partire dallo screenshot del pet fornito dall'utente. È un'illustrazione raster nuova, non un ritaglio dello screenshot. Testa nera molto grande, occhi ovali color crema, orecchio interno verde menta, corpo piccolo e coda ricurva. L'utente ha richiesto esplicitamente questa somiglianza.
+Dalla v0.3 l'app usa lo [spritesheet del pet personale 罗小黑](../app/src/main/res/drawable-nodpi/luoxiaohei_sprites.webp), identificato dall'utente come riferimento. Il file è copiato senza modifiche dal pet `luoxiaohei2d` presente sul suo computer. Descrizione originale: “A tiny black cat Codex companion inspired by Luo Xiaohei, simplified into a cute polished Codex digital pet style.”
 
-Il pet rimane facoltativo e disattivato inizialmente. Un piccolo salto e una scintilla indicano una risposta corretta; una lieve inclinazione e un cuore accompagnano un errore o una risposta parziale. Tre puntini indicano il giudizio non valutabile; una coda vuota mantiene il pet in attesa. Non cambia la posizione dei controlli. Il giudizio rettificato dall'utente determina la reazione.
+Compose mostra i fotogrammi di attesa e battito degli occhi, salto per un esito corretto, saluto per uno parziale, incoraggiamento dopo un errore e riflessione per un esito non valutabile. I controlli restano fermi. La scala animazioni Android a zero seleziona pose statiche; il passaggio in background interrompe l'animazione. Nessun suono o servizio in background.
 
-Prompt di generazione:
+La [precedente illustrazione generata e relativo prompt](https://github.com/giovannipivatoo/memoro/blob/v0.2.0/docs/UI-UX.md#gattino) rimangono documentati nella v0.2.
 
-> Use case: identity-preserve. Asset type: transparent mascot sprite for an Android flashcard app. Attached screenshot character reference, not background. Recreate same little black kitten, hugely oversized round black head, enormous pale butter-yellow oval eyes with black oval pupils, three-quarter facing left, asymmetric ears with pale mint right inner ear, tiny seated black body/four paws, thick hooked tail right. Deep black with warm brown outlines. Faithful proportions/silhouette, curious friendly, not owl/rabbit/realistic. Crisp hand-drawn 2D game pet, subtle pixel-art inspiration, flat colors, no glossy 3D/fur detail. Center fully visible 8% transparent padding. True alpha, no checkerboard/floor/shadow/UI/text/watermark.
+## Estensione risposte e ripasso libero (v0.3)
+
+La modalità si sceglie già nell'editor. Scritta è l'impostazione iniziale delle note manuali e funziona offline; Esatta e AI restano selezioni esplicite. La scelta multipla ha 2–6 opzioni e una risposta corretta, senza mostrare l'indice durante lo studio. Riferimento e rettifica compaiono dopo l'invio.
+
+Il dettaglio mazzo offre sempre Ripasso libero quando contiene carte attive. I risultati vengono conservati in una sezione dedicata della cronologia; le scadenze e i quattro voti del ripasso programmato rimangono separati.
 
 ## Verifica
 
