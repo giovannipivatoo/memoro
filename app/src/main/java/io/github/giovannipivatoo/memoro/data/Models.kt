@@ -4,10 +4,12 @@ package io.github.giovannipivatoo.memoro.data
 import kotlinx.serialization.Serializable
 
 @Serializable enum class NoteKind { BASIC, REVERSE, CLOZE }
-@Serializable enum class AnswerMode { CLASSIC, EXACT, AI }
+@Serializable enum class AnswerMode { CLASSIC, EXACT, AI, WRITTEN, MULTIPLE_CHOICE }
 @Serializable enum class Outcome { CORRECT, PARTIAL, WRONG, UNGRADABLE }
 @Serializable enum class Rating { AGAIN, HARD, GOOD, EASY }
-@Serializable enum class AttemptState { DRAFT, EVALUATED, REVIEWED }
+@Serializable enum class AttemptState { DRAFT, EVALUATED, REVIEWED, PRACTICED }
+
+@Serializable data class MultipleChoice(val options: List<String>, val correctIndex: Int)
 
 @Serializable data class AnkiMetadata(
     val originalId: Long? = null,
@@ -45,6 +47,7 @@ import kotlinx.serialization.Serializable
     val locallyEdited: Boolean = false,
     val modifiedAtMillis: Long = 0,
     val anki: AnkiMetadata? = null,
+    val multipleChoice: MultipleChoice? = null,
 )
 
 @Serializable data class Scheduling(
@@ -86,6 +89,7 @@ import kotlinx.serialization.Serializable
     val state: AttemptState = AttemptState.DRAFT,
     val createdAtMillis: Long,
     val updatedAtMillis: Long = createdAtMillis,
+    val isPractice: Boolean = false,
 )
 
 @Serializable data class Review(
@@ -106,7 +110,7 @@ import kotlinx.serialization.Serializable
 )
 
 @Serializable data class ArchiveSnapshot(
-    val version: Int = 1,
+    val version: Int = 2,
     val ankiCollectionJson: String? = null,
     val originalPackagePath: String? = null,
     val originalPackagePaths: List<String> = emptyList(),

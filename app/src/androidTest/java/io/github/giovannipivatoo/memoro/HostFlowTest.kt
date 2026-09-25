@@ -58,7 +58,7 @@ class HostFlowTest {
         compose.onNodeWithText(deckName).performScrollTo().performClick()
         compose.onNodeWithTag("addNote").performClick()
         waitTag("noteFront")
-        compose.onNodeWithTag("noteFront").performTextInput("Quale pianeta abitiamo?")
+        compose.onNodeWithTag("noteFront").performScrollTo().performTextInput("Quale pianeta abitiamo?")
         compose.onNodeWithTag("noteBack").performScrollTo().performTextInput("Terra")
         capture("editor-keyboard-verified")
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation

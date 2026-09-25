@@ -169,7 +169,7 @@ internal fun DeleteDialog(title: String, body: String, onDismiss: () -> Unit, on
 }
 
 @Composable
-internal fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> Unit, onStudy: () -> Unit, onError: (String) -> Unit) {
+internal fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> Unit, onStudy: () -> Unit, onPractice: () -> Unit, onError: (String) -> Unit) {
     val notes by remember(deckId) { repo.observeNotes(deckId) }.collectAsState(initial = emptyList())
     val cards by remember(deckId) { repo.observeCards(deckId) }.collectAsState(initial = emptyList())
     val foreignNotes by produceState<List<Note>>(emptyList(), cards, notes) {
@@ -187,6 +187,7 @@ internal fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> 
     val scope = rememberCoroutineScope()
     val now = System.currentTimeMillis()
     val due = cards.count { !it.archived && (it.scheduling.importedQueue ?: 0) >= 0 && it.scheduling.dueAtMillis <= now }
+    val practiceAvailable = cards.any { !it.archived && (it.scheduling.importedQueue ?: 0) >= 0 }
     val visibleNotes = displayNotes.filter { note -> query.isBlank() || note.fields.any { it.contains(query, ignoreCase = true) } }
     Column(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -197,6 +198,10 @@ internal fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> 
                     Button(enabled = due > 0 && !savingModes, onClick = onStudy, modifier = Modifier.fillMaxWidth().testTag("studyDeck")) {
                         Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text(if (savingModes) "Salvataggio…" else if (due > 0) "Studia ora" else "Nessuna carta pronta")
                     }
+                    OutlinedButton(enabled = practiceAvailable && !savingModes, onClick = onPractice, modifier = Modifier.fillMaxWidth().testTag("practiceDeck")) {
+                        Text("Ripasso libero")
+                    }
+                    Text("Rivedi le carte quando vuoi, senza cambiare le scadenze.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             item {
@@ -287,19 +292,20 @@ internal fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> 
 
 @Composable
 private fun ModeDialog(targets: List<StudyCard>, notes: List<Note>, saving: Boolean, onDismiss: () -> Unit, onApply: (AnswerMode) -> Unit) {
-    var choice by remember(targets.map { it.id }) { mutableStateOf(targets.singleOrNull()?.modes?.singleOrNull() ?: AnswerMode.CLASSIC) }
+    var choice by remember(targets.map { it.id }) { mutableStateOf(targets.singleOrNull()?.modes?.singleOrNull() ?: AnswerMode.WRITTEN) }
     val noteById = notes.associateBy { it.id }
     fun incompatible(mode: AnswerMode): Int = targets.count { card ->
         val note = noteById[card.noteId]
         when (mode) {
-            AnswerMode.CLASSIC -> false
+            AnswerMode.CLASSIC, AnswerMode.WRITTEN -> false
             AnswerMode.EXACT -> note == null || AnkiRenderer.exactExpected(card, note) == null
             AnswerMode.AI -> note == null || AnkiRenderer.render(card, note).answer.replace(Regex("\\[(image|audio):[^]]+]"), "").isBlank()
+            AnswerMode.MULTIPLE_CHOICE -> note == null || note.kind != NoteKind.BASIC || note.multipleChoice == null
         }
     }
     AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text(if (targets.size == 1) "Modalità risposta" else "Modalità per ${targets.size} carte") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            AnswerMode.entries.forEach { mode ->
+            listOf(AnswerMode.WRITTEN, AnswerMode.CLASSIC, AnswerMode.EXACT, AnswerMode.AI, AnswerMode.MULTIPLE_CHOICE).forEach { mode ->
                 val count = incompatible(mode)
                 val eligible = count == 0
                 Row(Modifier.fillMaxWidth().selectable(selected = choice == mode, enabled = eligible && !saving, role = Role.RadioButton, onClick = { choice = mode }).testTag("mode-${mode.name}"), verticalAlignment = Alignment.CenterVertically) {
@@ -315,11 +321,13 @@ private fun ModeDialog(targets: List<StudyCard>, notes: List<Note>, saving: Bool
 }
 
 internal fun NoteKind.label() = when (this) { NoteKind.BASIC -> "Base"; NoteKind.REVERSE -> "Fronte e inversa"; NoteKind.CLOZE -> "Cloze" }
-internal fun AnswerMode.label() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.EXACT -> "Esatta"; AnswerMode.AI -> "AI" }
+internal fun AnswerMode.label() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.WRITTEN -> "Scritta"; AnswerMode.EXACT -> "Esatta"; AnswerMode.AI -> "AI"; AnswerMode.MULTIPLE_CHOICE -> "Scelta multipla" }
 private fun AnswerMode.description() = when (this) {
     AnswerMode.CLASSIC -> "Guarda la risposta e valuta tu"
+    AnswerMode.WRITTEN -> "Scrivi e confronta da te, anche offline"
     AnswerMode.EXACT -> "Scrivi la risposta; confronto locale"
     AnswerMode.AI -> "Scrivi la risposta; valutazione DeepSeek"
+    AnswerMode.MULTIPLE_CHOICE -> "Scegli tra le opzioni della nota"
 }
 
 private fun Note.preview(cards: List<StudyCard>): String =

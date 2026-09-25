@@ -107,6 +107,12 @@ internal class AnkiExporter(private val context: Context) {
             nativeModelIds[kind] = id
             models.put(id.toString(), model(id, kind))
         }
+        val nativeChoiceModelId = if (snapshot.notes.any { it.anki == null && it.multipleChoice != null }) nextModelId++.also {
+            models.put(it.toString(), model(it, NoteKind.BASIC, multipleChoice = true))
+        } else null
+        if (snapshot.notes.any { it.multipleChoice != null }) {
+            warnings += "Scelta multipla esportata in Anki con opzioni statiche; la risposta interattiva è disponibile solo in Memoro"
+        }
         val defaultModelId = models.keys().asSequence().firstOrNull()?.toLongOrNull() ?: 1000L
         val deckIds = allocateIds(snapshot.decks.map { it.id to it.anki?.originalId })
         val noteIds = allocateIds(snapshot.notes.map { it.id to it.anki?.originalId })
@@ -121,8 +127,10 @@ internal class AnkiExporter(private val context: Context) {
             decks.put(id.toString(), item)
         }
         for (note in snapshot.notes) {
-            val id = note.anki?.originalModelId ?: nativeModelIds[note.kind] ?: defaultModelId
-            if (!models.has(id.toString())) models.put(id.toString(), model(id, note.kind))
+            val id = requireNotNull(note.anki?.originalModelId ?: if (note.multipleChoice != null) nativeChoiceModelId else nativeModelIds[note.kind] ?: defaultModelId) {
+                "Tipo nota mancante per ${note.id}"
+            }
+            if (!models.has(id.toString())) models.put(id.toString(), model(id, note.kind, note.multipleChoice != null))
         }
         for (key in models.keys()) models.optJSONObject(key)?.let(::completeModel)
         val col = ContentValues().apply { put("models", models.toString()); put("decks", decks.toString()) }
@@ -131,13 +139,21 @@ internal class AnkiExporter(private val context: Context) {
         for (note in snapshot.notes) {
             val id = noteIds.getValue(note.id)
             val raw = jsonObject(note.anki?.rawJson)
-            val fields = if (note.anki == null) note.fields.map(::nativeMediaToAnki) else note.fields
-            raw.put("id", id).put("mid", note.anki?.originalModelId ?: nativeModelIds[note.kind] ?: defaultModelId).put("flds", fields.joinToString("\u001f"))
+            val modelId = note.anki?.originalModelId ?: if (note.multipleChoice != null) nativeChoiceModelId else nativeModelIds[note.kind] ?: defaultModelId
+            val choiceModel = models.optJSONObject(modelId.toString())?.optString("name") == AnkiMultipleChoice.MODEL_NAME
+            val fields = when {
+                note.multipleChoice != null -> AnkiMultipleChoice.exportFields(note, ::nativeMediaToAnki)
+                choiceModel -> listOf(note.fields.getOrElse(0) { "" }, note.fields.getOrElse(1) { "" }).map(::nativeMediaToAnki) + ""
+                note.anki == null -> note.fields.map(::nativeMediaToAnki)
+                else -> note.fields
+            }
+            raw.put("id", id).put("mid", modelId).put("flds", fields.joinToString("\u001f"))
                 .put("tags", if (note.tags.isEmpty()) "" else " ${note.tags.joinToString(" ")} ")
             putDefault(raw, "guid", requireNotNull(note.guid) { "Nota ${note.id} senza GUID persistente" })
             raw.put("mod", maxOf(raw.optLong("mod"), note.modifiedAtMillis / 1000, now.takeIf { note.anki == null } ?: 0))
             putDefault(raw, "usn", -1)
-            putDefault(raw, "sfld", fields.firstOrNull().orEmpty()); putDefault(raw, "csum", 0); putDefault(raw, "flags", 0); putDefault(raw, "data", "")
+            if (choiceModel) raw.put("sfld", fields.first()) else putDefault(raw, "sfld", fields.firstOrNull().orEmpty())
+            putDefault(raw, "csum", 0); putDefault(raw, "flags", 0); putDefault(raw, "data", "")
             insert(db, "notes", raw)
         }
         val crt = db.rawQuery("SELECT crt FROM col", null).use { if (it.moveToFirst()) it.getLong(0) else 0L }
@@ -207,13 +223,13 @@ internal class AnkiExporter(private val context: Context) {
         else -> 0
     }
 
-    private fun model(id: Long, kind: NoteKind): JSONObject {
+    private fun model(id: Long, kind: NoteKind, multipleChoice: Boolean = false): JSONObject {
         val cloze = kind == NoteKind.CLOZE
-        val fields = if (cloze) listOf("Text", "Extra") else listOf("Front", "Back")
+        val fields = if (cloze) listOf("Text", "Extra") else if (multipleChoice) listOf("Front", "Back", AnkiMultipleChoice.FIELD_NAME) else listOf("Front", "Back")
         val templates = if (cloze) listOf(JSONObject().put("name", "Cloze").put("ord", 0).put("qfmt", "{{cloze:Text}}").put("afmt", "{{cloze:Text}}<br>{{Extra}}")) else
             listOf(JSONObject().put("name", "Card 1").put("ord", 0).put("qfmt", "{{Front}}").put("afmt", "{{FrontSide}}<hr id=answer>{{Back}}")) +
                 (if (kind == NoteKind.REVERSE) listOf(JSONObject().put("name", "Card 2").put("ord", 1).put("qfmt", "{{Back}}").put("afmt", "{{FrontSide}}<hr id=answer>{{Front}}")) else emptyList())
-        return JSONObject().put("id", id).put("name", "Memoro ${kind.name}").put("type", if (cloze) 1 else 0)
+        return JSONObject().put("id", id).put("name", if (multipleChoice) AnkiMultipleChoice.MODEL_NAME else "Memoro ${kind.name}").put("type", if (cloze) 1 else 0)
             .put("mod", System.currentTimeMillis() / 1000).put("usn", -1).put("sortf", 0).put("did", JSONObject.NULL)
             .put("tmpls", org.json.JSONArray(templates)).put("flds", org.json.JSONArray(fields.mapIndexed { i, s -> JSONObject().put("name", s).put("ord", i) }))
             .put("css", ".card { font-family: sans-serif; font-size: 20px; }").put("latexPre", "").put("latexPost", "").put("req", org.json.JSONArray())

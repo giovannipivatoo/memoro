@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.giovannipivatoo.memoro.data.NoteKind
 import io.github.giovannipivatoo.memoro.data.Deck
 import io.github.giovannipivatoo.memoro.data.Note
+import io.github.giovannipivatoo.memoro.data.MultipleChoice
 import io.github.giovannipivatoo.memoro.data.Attempt
 import io.github.giovannipivatoo.memoro.data.AttemptState
 import io.github.giovannipivatoo.memoro.data.AnswerMode
@@ -14,6 +15,8 @@ import io.github.giovannipivatoo.memoro.data.RoomMemoroRepository
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipFile
+import android.database.sqlite.SQLiteDatabase
+import org.json.JSONObject
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -23,6 +26,108 @@ import org.junit.runner.RunWith
 class AnkiInteropTest {
     private val instrument = InstrumentationRegistry.getInstrumentation()
     private val app = instrument.targetContext
+
+    @Test fun multipleChoiceExportsAsStaticAnkiCardAndRestoresInteractiveMetadata() = runBlocking {
+        app.deleteDatabase("memoro.db")
+        val service = AnkiService(app)
+        val choice = MultipleChoice(listOf("3", "4", "5"), 1)
+        val sourceRepo = RoomMemoroRepository.open(app)
+        val bytes = try {
+            val repo = sourceRepo
+            val deck = repo.saveDeck(Deck(name = "Arithmetic"))
+            repo.saveNote(Note(deckId = deck.id, fields = listOf("Quanto fa {{c1::2}} + 2?", "4"), multipleChoice = choice), AnswerMode.MULTIPLE_CHOICE)
+            val output = ByteArrayOutputStream()
+            val report = service.exportApkg(output, repo)
+            assertTrue(report.warnings.any { "opzioni statiche" in it })
+            output.toByteArray().also { app.getExternalFilesDir(null)!!.resolve("memoro-multiple-choice-oracle.apkg").writeBytes(it) }
+        } finally { sourceRepo.close() }
+        val packageFile = File.createTempFile("memoro-mc-", ".apkg", app.cacheDir)
+        val dbFile = File.createTempFile("memoro-mc-", ".db", app.cacheDir)
+        try {
+            packageFile.writeBytes(bytes)
+            ZipFile(packageFile).use { zip ->
+                zip.getInputStream(zip.getEntry("collection.anki21")).use { input -> dbFile.outputStream().use(input::copyTo) }
+            }
+            SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                db.rawQuery("SELECT flds,mid FROM notes", null).use { rows ->
+                    assertTrue(rows.moveToFirst())
+                    val fields = rows.getString(0).split('\u001f')
+                    assertEquals(3, fields.size)
+                    assertTrue(fields[0].contains("<li>3</li>"))
+                    assertTrue(fields[0].contains("<li>4</li>"))
+                    assertEquals("4", fields[1])
+                    assertTrue(fields[2].startsWith("MemoroMC:v1:"))
+                    val modelId = rows.getLong(1)
+                    db.rawQuery("SELECT models FROM col", null).use { col ->
+                        assertTrue(col.moveToFirst())
+                        val model = JSONObject(col.getString(0)).getJSONObject(modelId.toString())
+                        assertEquals("Memoro Multiple Choice", model.getString("name"))
+                        val template = model.getJSONArray("tmpls").getJSONObject(0)
+                        assertEquals("{{Front}}", template.getString("qfmt"))
+                        assertFalse(template.getString("qfmt").contains("<script"))
+                    }
+                }
+            }
+            app.deleteDatabase("memoro.db")
+            val importedRepo = RoomMemoroRepository.open(app)
+            try {
+                val repo = importedRepo
+                bytes.inputStream().use { service.importApkg(it, repo) }
+                val first = repo.snapshot()
+                assertEquals(1, first.notes.size)
+                assertEquals(listOf("Quanto fa {{c1::2}} + 2?", "4"), first.notes.single().fields)
+                assertEquals(NoteKind.BASIC, first.notes.single().kind)
+                assertEquals(choice, first.notes.single().multipleChoice)
+                assertEquals(setOf(AnswerMode.MULTIPLE_CHOICE), first.cards.single().modes)
+                bytes.inputStream().use { service.importApkg(it, repo) }
+                assertEquals(1, repo.snapshot().notes.size)
+                val secondExport = ByteArrayOutputStream()
+                service.exportApkg(secondExport, repo)
+                secondExport.toByteArray().inputStream().use { service.importApkg(it, repo) }
+                assertEquals(choice, repo.snapshot().notes.single().multipleChoice)
+                assertEquals(1, repo.snapshot().cards.size)
+            } finally { importedRepo.close() }
+        } finally { packageFile.delete(); dbFile.delete() }
+    }
+
+    @Test fun removingChoiceFromReimportedNoteKeepsThreeAnkiFieldsWithoutResurrectingIt() = runBlocking {
+        app.deleteDatabase("memoro.db")
+        val repo = RoomMemoroRepository.open(app)
+        val service = AnkiService(app)
+        try {
+            val deck = repo.saveDeck(Deck(name = "Arithmetic"))
+            repo.saveNote(Note(deckId = deck.id, fields = listOf("2 + 2?", "4"),
+                multipleChoice = MultipleChoice(listOf("3", "4"), 1)), AnswerMode.MULTIPLE_CHOICE)
+            val first = ByteArrayOutputStream()
+            service.exportApkg(first, repo)
+            first.toByteArray().inputStream().use { service.importApkg(it, repo) }
+            val imported = repo.snapshot()
+            assertNotNull(imported.notes.single().anki)
+            repo.saveNoteAndCards(imported.notes.single().copy(multipleChoice = null),
+                imported.cards.map { it.copy(modes = setOf(AnswerMode.WRITTEN)) })
+            val removed = ByteArrayOutputStream()
+            service.exportApkg(removed, repo)
+            val bytes = removed.toByteArray()
+            app.getExternalFilesDir(null)!!.resolve("memoro-multiple-choice-removed-oracle.apkg").writeBytes(bytes)
+            val packageFile = File.createTempFile("memoro-mc-removed-", ".apkg", app.cacheDir)
+            val dbFile = File.createTempFile("memoro-mc-removed-", ".db", app.cacheDir)
+            try {
+                packageFile.writeBytes(bytes)
+                ZipFile(packageFile).use { zip ->
+                    zip.getInputStream(zip.getEntry("collection.anki21")).use { input -> dbFile.outputStream().use(input::copyTo) }
+                }
+                SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                    db.rawQuery("SELECT flds FROM notes", null).use { rows ->
+                        assertTrue(rows.moveToFirst())
+                        assertEquals("2 + 2?\u001f4\u001f", rows.getString(0))
+                    }
+                }
+            } finally { packageFile.delete(); dbFile.delete() }
+            bytes.inputStream().use { service.importApkg(it, repo) }
+            assertNull(repo.snapshot().notes.single().multipleChoice)
+            assertEquals(setOf(AnswerMode.WRITTEN), repo.snapshot().cards.single().modes)
+        } finally { repo.close() }
+    }
 
     @Test fun realLegacyAndModernPackagesImportAndReimportWithoutDuplicates() = runBlocking {
         app.deleteDatabase("memoro.db")

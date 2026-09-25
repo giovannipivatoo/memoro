@@ -16,13 +16,14 @@ interface MemoroRepository {
     suspend fun dueCards(nowMillis: Long, deckId: Long? = null): List<Card>
     suspend fun saveDeck(deck: Deck): Deck
     suspend fun deleteDeck(id: Long)
-    suspend fun saveNote(note: Note): Note
+    suspend fun saveNote(note: Note, preferredMode: AnswerMode? = null): Note
     suspend fun saveNoteAndCards(note: Note, cards: List<Card>): Note
     suspend fun deleteNote(id: Long)
     suspend fun saveCard(card: Card): Card
     suspend fun saveAttempt(attempt: Attempt): Attempt
     suspend fun deleteAttemptPersonalData(attemptId: Long)
     suspend fun commitReview(attemptId: Long, rating: Rating, nowMillis: Long): Review
+    suspend fun finishPractice(attemptId: Long, nowMillis: Long): Attempt
     suspend fun snapshot(): ArchiveSnapshot
     suspend fun importSnapshot(snapshot: ArchiveSnapshot)
     suspend fun restoreSnapshot(snapshot: ArchiveSnapshot, fileRootName: String? = null)
