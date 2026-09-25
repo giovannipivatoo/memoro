@@ -8,6 +8,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import io.github.giovannipivatoo.memoro.data.*
 import io.github.giovannipivatoo.memoro.ui.AppActions
 import io.github.giovannipivatoo.memoro.ui.MemoroApp
@@ -70,6 +73,21 @@ class StudyFlowTest {
         }
     }
 
+    private fun submitAnswer() {
+        // Native IME/focus scrolling can still move the button after Compose reports idle.
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
+        }
+        compose.waitUntil(5_000) {
+            compose.runOnUiThread {
+                ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == false
+            }
+        }
+        compose.onNodeWithTag("submitAnswer").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+    }
+
     private fun capture(name: String) {
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         if (androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("capture") != "true") return
@@ -88,7 +106,7 @@ class StudyFlowTest {
         compose.onNodeWithTag("referenceAnswer").assertDoesNotExist()
         compose.onNodeWithText("Roma è la capitale d'Italia.").assertDoesNotExist()
         compose.onNodeWithTag("answerInput").performTextInput("Rmoa")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("referenceAnswer").assertTextContains("Roma")
         compose.onNodeWithText("Esito automatico: Errata").performScrollTo().assertIsDisplayed()
@@ -121,7 +139,7 @@ class StudyFlowTest {
         runBlocking { val card = repo.getCard(cardId)!!; repo.saveCard(card.copy(modes = setOf(AnswerMode.AI))) }
         launch()
         compose.onNodeWithTag("answerInput").performTextInput("Roma")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("technicalError")
         assertEquals("Roma", runBlocking { repo.snapshot().attempts.single().answer })
         assertTrue(runBlocking { repo.snapshot().reviews.isEmpty() })
@@ -151,7 +169,7 @@ class StudyFlowTest {
         val restoration = StateRestorationTester(compose)
         launch(restoration = restoration)
         compose.onNodeWithTag("answerInput").performTextInput("Rmoa")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithText("Modifica esito").performScrollTo().performClick()
         compose.onNodeWithText("Corretta").performClick()
@@ -181,7 +199,7 @@ class StudyFlowTest {
         waitTag("answerInput")
         compose.onNodeWithText("Impostazioni").assertDoesNotExist()
         compose.onNodeWithTag("answerInput").performTextInput("Prima risposta")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("rate-GOOD").performScrollTo().performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 1 } }
@@ -190,7 +208,7 @@ class StudyFlowTest {
         assertEquals("", compose.onNodeWithTag("answerInput").fetchSemanticsNode()
             .config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text)
         compose.onNodeWithTag("answerInput").performTextInput("Seconda risposta")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("rate-GOOD").performScrollTo().performClick()
         compose.waitUntil(10_000) { runBlocking { repo.snapshot().reviews.size == 2 } }
@@ -227,7 +245,7 @@ class StudyFlowTest {
         waitTag("answerInput")
         compose.onNodeWithTag("answerInput").performTextInput("La capitale è Roma")
         compose.onNodeWithTag("referenceAnswer").assertDoesNotExist()
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("referenceAnswer").assertTextContains("Roma")
         compose.onNodeWithText("Valuta la tua risposta").performScrollTo().performClick()
@@ -277,7 +295,7 @@ class StudyFlowTest {
         waitTag("choice-0")
         compose.onNodeWithTag("choice-0").assertIsSelected()
         compose.onNodeWithTag("referenceAnswer").assertDoesNotExist()
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("referenceAnswer").assertTextContains("Terra")
         compose.onNodeWithText("Esito automatico: Errata").performScrollTo().assertIsDisplayed()
@@ -291,7 +309,7 @@ class StudyFlowTest {
         waitTag("choice-1")
         compose.onNodeWithTag("submitAnswer").assertIsNotEnabled()
         compose.onNodeWithTag("choice-1").performScrollTo().performClick()
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithText("Esito automatico: Corretta").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("nextPractice").performScrollTo().performClick()
@@ -315,7 +333,7 @@ class StudyFlowTest {
         compose.onNodeWithTag("practiceDeck").performClick()
         waitTag("answerInput")
         compose.onNodeWithTag("answerInput").performTextInput("Roma")
-        compose.onNodeWithTag("submitAnswer").performScrollTo().performClick()
+        submitAnswer()
         waitTag("referenceAnswer")
         compose.onNodeWithTag("nextPractice").performScrollTo().performClick()
         waitTag("answerInput")

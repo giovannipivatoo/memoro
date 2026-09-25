@@ -79,4 +79,4 @@ I limiti supportati sono in [README.md](README.md): template semplificati, prese
 
 ## Patch icona v0.3.1
 
-Modifica limitata a icona, manifest e numero di versione. `lintDebug assembleDebug` completati, senza errori e con gli stessi 17 warning della v0.3. Verifica visiva delle geometrie rotonde/arrotondate e monocromatiche; APK installato come aggiornamento e [icona verificata nel launcher API 36](docs/screenshots/launcher-icon.png). Nessuna modifica a studio, dati o compatibilità Anki.
+Modifiche all’app limitate a icona, manifest e numero di versione. I test di studio chiudono la tastiera prima del tap per evitare che la transizione IME sposti il pulsante durante il click automatico. `lintDebug assembleDebug` completati, senza errori e con gli stessi 17 warning della v0.3. Verifica visiva delle geometrie rotonde/arrotondate e monocromatiche; APK installato come aggiornamento e [icona verificata nel launcher API 36](docs/screenshots/launcher-icon.png). Nessuna modifica a studio, dati o compatibilità Anki.
