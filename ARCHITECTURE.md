@@ -11,7 +11,7 @@ Un modulo Android `app`, Kotlin, Compose Material 3, minSdk 26, database Room. P
 
 ## Modello e contratti
 
-`data/Models.kt` definisce Deck, Note, Card, Attempt, Review e ArchiveSnapshot. Una nota contiene campi e fonte facoltativa; genera una o più carte con ordinale, modalità e scheduling indipendenti. Il tentativo conserva bozza, esito automatico, esito umano e feedback. Il ripasso conserva il voto FSRS: correttezza e voto non sono intercambiabili.
+`data/Models.kt` definisce Deck, Note, Card, Attempt, Review e ArchiveSnapshot. Una nota contiene campi e fonte facoltativa; genera una o più carte con ordinale, modalità e scheduling indipendenti. Il tentativo conserva bozza, esito automatico, esito umano e feedback. `Note.multipleChoice` contiene opzioni e indice corretto per una nota Base; il riferimento deve coincidere con l’opzione corretta. `saveNote(note, preferredMode)` applica la modalità alle carte native nella stessa transazione. Il ripasso conserva il voto FSRS: correttezza e voto non sono intercambiabili.
 
 `MemoroRepository` espone osservazione, CRUD, carte dovute, tentativi, commit del ripasso e snapshot. Room salva corpi JSON versionabili e colonne indicizzate per selezioni e identità. `commitReview` aggiorna scheduling, tentativo e review nella stessa transazione; l'indice univoco del tentativo impedisce doppi ripassi. `saveNoteAndCards` mantiene atomica la modifica di una nota importata e di tutte le sue carte, anche distribuite su mazzi diversi. Modificare i contratti richiede comunicazione ai consumatori prima dell'implementazione.
 
@@ -19,7 +19,9 @@ I client AI restituiscono risultati senza accedere al repository o alle scadenze
 
 ## Ciclo di vita e studio
 
-`MemoroHost`, un AndroidViewModel, mantiene repository e servizi durante la ricreazione dell'Activity. Compose salva pagina e dati transitori con `rememberSaveable`; le bozze e i risultati già valutati vengono ricaricati da Room prima di abilitare l'input. La risposta di riferimento e la fonte restano nascoste fino all'invio. L'autovalutazione è sempre disponibile senza rete. Le modifiche multiple alla modalità disabilitano temporaneamente l'avvio dello studio fino al salvataggio.
+`MemoroHost`, un AndroidViewModel, mantiene repository e servizi durante la ricreazione dell'Activity. Compose salva pagina e dati transitori con `rememberSaveable`; le bozze e i risultati già valutati vengono ricaricati da Room prima di abilitare l'input. La risposta di riferimento e la fonte restano nascoste fino all'invio. L'autovalutazione è sempre disponibile senza rete. `Attempt.isPractice` separa bozze e risultati del ripasso libero. `finishPractice` porta un tentativo valutato a PRACTICED in modo idempotente; non crea Review. `commitReview` rifiuta tentativi liberi. Il cursore della sessione libera sopravvive alla ricreazione.
+
+Le modifiche multiple alla modalità disabilitano temporaneamente l'avvio dello studio fino al salvataggio.
 
 FSRS-6 è Kotlin puro, con parametri standard, retention 90% e fuzzing disabilitato. Passi iniziali 1 e 10 minuti, riapprendimento 10 minuti. Il bootstrap delle carte Anki senza stato di memoria usa l'intervallo esistente al primo ripasso. Le formule sono verificate contro py-fsrs; provenienza e comando di riferimento in THIRD_PARTY_FSRS.md.
 
@@ -31,9 +33,11 @@ Il digest del pacchetto identifica la provenienza, non la nota. La reimportazion
 
 Rendering con componenti Android nativi, senza WebView/JavaScript/rete; HTML/template complessi sono semplificati con avviso. Media locali con percorsi validati e limiti dimensionali. Preset avanzati e personalizzazioni non riproducibili sono segnalati e l'originale `.apkg` viene conservato. La versione moderna esporta un database schema 11 dentro il contenitore zstd accettato da Anki.
 
+Le note Memoro a scelta multipla diventano carte Anki Base con opzioni statiche e un terzo campo `MemoroMC` ignorato dal template. Metadati versionati e hash dei due fronti permettono di ricostruire la modalità interattiva solo se il contenuto è coerente. Una modifica esterna dei fronti invalida il recupero e produce un avviso, mantenendo il contenuto Anki visibile.
+
 ## Backup e credenziali
 
-Lo ZIP include snapshot versione 1, file con dimensione/digest, fonti, tentativi, media e originali Anki. Prima del ripristino vengono validati percorsi, dimensioni, digest, identità e riferimenti; viene creato un backup preventivo. I nuovi file sono completati in una directory di generazione separata, poi Room sostituisce i dati e il puntatore alla generazione nella stessa transazione. Una terminazione del processo lascia referenziata la generazione completa precedente o successiva. Le vecchie generazioni sono conservate: nessuna garbage collection nella v0.1.
+Lo ZIP include snapshot versione 2 (il lettore accetta anche la versione 1), file con dimensione/digest, fonti, tentativi, media e originali Anki. Prima del ripristino vengono validati percorsi, dimensioni, digest, identità e riferimenti; viene creato un backup preventivo. I nuovi file sono completati in una directory di generazione separata, poi Room sostituisce i dati e il puntatore alla generazione nella stessa transazione. Una terminazione del processo lascia referenziata la generazione completa precedente o successiva. Le vecchie generazioni sono conservate: nessuna pulizia automatica delle generazioni nella preview attuale.
 
 La chiave API è cifrata con Android Keystore, esterna allo ZIP; preferenze UI in SharedPreferences. Il manifest esclude backup e trasferimento automatici Android. I file restano nello spazio privato dell'app; l'esportazione è una scelta esplicita attraverso il selettore documenti di Android.
 

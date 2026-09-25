@@ -3,6 +3,8 @@ package io.github.giovannipivatoo.memoro.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,11 +40,21 @@ internal fun StudyScreen(
     petEnabled: Boolean,
     onError: (String) -> Unit,
     onDone: () -> Unit = {},
+    practice: Boolean = false,
 ) {
-    var due by remember(deckId) { mutableStateOf<List<Card>>(emptyList()) }
-    var loading by remember(deckId) { mutableStateOf(true) }
-    var index by remember(deckId) { mutableIntStateOf(0) }
-    LaunchedEffect(deckId) { try { due = repo.dueCards(System.currentTimeMillis(), deckId) } catch (e: Exception) { onError(e.message ?: "Impossibile caricare le carte") }; loading = false }
+    var due by remember(deckId, practice) { mutableStateOf<List<Card>>(emptyList()) }
+    var loading by remember(deckId, practice) { mutableStateOf(true) }
+    var reviewIndex by remember(deckId, practice) { mutableIntStateOf(0) }
+    var practiceIndex by androidx.compose.runtime.saveable.rememberSaveable(deckId, practice) { mutableIntStateOf(0) }
+    val index = if (practice) practiceIndex else reviewIndex
+    LaunchedEffect(deckId, practice) {
+        try {
+            due = if (practice) repo.snapshot().cards.filter {
+                (deckId == null || it.deckId == deckId) && !it.archived && (it.scheduling.importedQueue ?: 0) >= 0
+            }.sortedBy { it.id } else repo.dueCards(System.currentTimeMillis(), deckId)
+        } catch (e: Exception) { onError(e.message ?: "Impossibile caricare le carte") }
+        loading = false
+    }
     if (loading) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
     val card = due.getOrNull(index)
     if (card == null) {
@@ -50,14 +62,14 @@ internal fun StudyScreen(
             Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (petEnabled) MemoroPet(if (due.isEmpty()) null else Outcome.CORRECT, Modifier.size(96.dp))
                 Text(if (due.isEmpty()) "Per ora hai finito" else "Sessione completata", style = MaterialTheme.typography.headlineMedium)
-                Text(if (due.isEmpty()) "Nessuna carta in scadenza." else "Hai ripassato tutte le carte previste.", style = MaterialTheme.typography.bodyLarge)
+                Text(if (due.isEmpty()) { if (practice) "Questo mazzo non contiene carte attive." else "Nessuna carta in scadenza." } else if (practice) "Ripasso libero completato. Le scadenze non sono cambiate." else "Hai ripassato tutte le carte previste.", style = MaterialTheme.typography.bodyLarge)
                 Button(onClick = onDone, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (deckId == null) "Torna alla home" else "Torna al mazzo") }
             }
         }
         return
     }
-    key(card.id) {
-        CardStudyContent(repo, card, index, due.size, ai, apiKey, model, petEnabled, onError) { index++ }
+    key(card.id, practice) {
+        CardStudyContent(repo, card, index, due.size, ai, apiKey, model, petEnabled, practice, onError) { if (practice) practiceIndex++ else reviewIndex++ }
     }
 }
 
@@ -71,6 +83,7 @@ private fun CardStudyContent(
     apiKey: () -> String,
     model: () -> String,
     petEnabled: Boolean,
+    practice: Boolean,
     onError: (String) -> Unit,
     onReviewed: () -> Unit,
 ) {
@@ -80,15 +93,21 @@ private fun CardStudyContent(
     }
     val attemptList = attempts
     if (attemptList == null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
-    val current = attemptList.firstOrNull { it.state != AttemptState.REVIEWED }
+    val current = attemptList.firstOrNull { it.isPractice == practice && it.state in setOf(AttemptState.DRAFT, AttemptState.EVALUATED) }
     val note by produceState<Note?>(initialValue = null, card.noteId) { value = repo.getNote(card.noteId) }
     val faces = remember(card, note) { note?.let { AnkiRenderer.render(card, it) } }
     val question = faces?.question ?: card.front
     val reference = faces?.answer ?: card.back
     val textReference = reference.replace(Regex("\\[(image|audio):[^]]+]"), "").trim()
     val exactExpected = note?.let { AnkiRenderer.exactExpected(card, it) }
-    val availableModes = (card.modes + AnswerMode.CLASSIC).filterTo(mutableSetOf()) {
-        when (it) { AnswerMode.CLASSIC -> true; AnswerMode.EXACT -> exactExpected != null; AnswerMode.AI -> textReference.isNotBlank() }
+    val choices = note?.multipleChoice
+    val availableModes = (card.modes + AnswerMode.CLASSIC + AnswerMode.WRITTEN).filterTo(mutableSetOf()) {
+        when (it) {
+            AnswerMode.CLASSIC, AnswerMode.WRITTEN -> true
+            AnswerMode.EXACT -> exactExpected != null
+            AnswerMode.AI -> textReference.isNotBlank()
+            AnswerMode.MULTIPLE_CHOICE -> choices != null
+        }
     }
     var mode by androidx.compose.runtime.saveable.rememberSaveable(card.id) { mutableStateOf(current?.mode ?: availableModes.firstOrNull() ?: AnswerMode.CLASSIC) }
     var answer by androidx.compose.runtime.saveable.rememberSaveable(card.id) { mutableStateOf(current?.answer.orEmpty()) }
@@ -121,7 +140,7 @@ private fun CardStudyContent(
     suspend fun saveDraft(): Attempt = saveMutex.withLock {
         hydrated = true
         val now = System.currentTimeMillis()
-        val saved = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer,
+        val saved = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer, isPractice = practice,
             state = AttemptState.DRAFT, createdAtMillis = current?.createdAtMillis ?: now, updatedAtMillis = now))
         attemptId = saved.id
         saved
@@ -133,10 +152,10 @@ private fun CardStudyContent(
         }
     }
     if (current != null && !hydrated) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("STUDIO  ·  ${index + 1} / ${dueSize}", color = MaterialTheme.colorScheme.primary,
+            Text("${if (practice) "RIPASSO LIBERO" else "STUDIO"}  ·  ${index + 1} / ${dueSize}", color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             LinearProgressIndicator(progress = { index.toFloat() / dueSize }, modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -153,6 +172,8 @@ private fun CardStudyContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (!submitted) {
+            if (practice) Text("Esercitati senza cambiare le scadenze.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (mode !in availableModes) Text("Questa modalità non è più disponibile per la carta. Scegline un'altra per continuare; la bozza resta salvata.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             if (availableModes.size > 1 || mode !in availableModes) Box {
@@ -173,7 +194,7 @@ private fun CardStudyContent(
                                         saveMutex.withLock {
                                             val previousId = attemptId
                                             val now = System.currentTimeMillis()
-                                            val saved = repo.saveAttempt(Attempt(cardId = card.id, mode = option, answer = answer,
+                                            val saved = repo.saveAttempt(Attempt(cardId = card.id, mode = option, answer = answer, isPractice = practice,
                                                 state = AttemptState.DRAFT, createdAtMillis = current?.createdAtMillis ?: now, updatedAtMillis = now))
                                             attemptId = saved.id; mode = option; hydrated = true
                                             newDraftSaved = true
@@ -188,11 +209,29 @@ private fun CardStudyContent(
                 }
             } else Text("Come rispondere: ${mode.studyLabel()}", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (mode != AnswerMode.CLASSIC) {
+            if (mode == AnswerMode.MULTIPLE_CHOICE && choices != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Scegli una risposta", style = MaterialTheme.typography.titleMedium)
+                    choices.options.forEachIndexed { optionIndex, option ->
+                        Surface(shape = RoundedCornerShape(18.dp),
+                            color = if (answer == option) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) {
+                            Row(Modifier.fillMaxWidth().selectable(selected = answer == option, enabled = !busy,
+                                role = Role.RadioButton, onClick = { answer = option }).testTag("choice-$optionIndex").padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = answer == option, onClick = null, enabled = !busy)
+                                Spacer(Modifier.width(10.dp))
+                                Text(option, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            } else if (mode != AnswerMode.CLASSIC) {
+                if (mode == AnswerMode.WRITTEN) Text("Scrivi ciò che ricordi, poi confronta la risposta e valuta tu.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(answer, { answer = it }, enabled = !busy, label = { Text("La tua risposta") }, minLines = 3,
                     shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().testTag("answerInput"))
             }
-            Button(enabled = !busy && mode in availableModes && (mode == AnswerMode.CLASSIC || answer.isNotBlank()), onClick = {
+            Button(enabled = !busy && mode in availableModes && (mode == AnswerMode.CLASSIC || (answer.isNotBlank() && (mode != AnswerMode.MULTIPLE_CHOICE || answer in choices?.options.orEmpty()))), onClick = {
                 if (busy) return@Button
                 busy = true
                 scope.launch {
@@ -200,12 +239,13 @@ private fun CardStudyContent(
                     try {
                         val draft = saveDraft()
                         when (mode) {
-                            AnswerMode.CLASSIC -> {
+                            AnswerMode.CLASSIC, AnswerMode.WRITTEN -> {
                                 val saved = repo.saveAttempt(draft.copy(state = AttemptState.EVALUATED, updatedAtMillis = System.currentTimeMillis()))
                                 attemptId = saved.id; submitted = true
                             }
-                            AnswerMode.EXACT -> {
-                                val outcome = gradeExact(answer, requireNotNull(exactExpected))
+                            AnswerMode.EXACT, AnswerMode.MULTIPLE_CHOICE -> {
+                                val expected = if (mode == AnswerMode.MULTIPLE_CHOICE) requireNotNull(choices).let { it.options[it.correctIndex] } else requireNotNull(exactExpected)
+                                val outcome = gradeExact(answer, expected)
                                 val saved = repo.saveAttempt(draft.copy(automaticOutcome = outcome, finalOutcome = outcome, state = AttemptState.EVALUATED, updatedAtMillis = System.currentTimeMillis()))
                                 attemptId = saved.id; automatic = outcome; finalOutcome = outcome; submitted = true
                             }
@@ -259,7 +299,7 @@ private fun CardStudyContent(
                         if (parsed.sourceConflict) Text("La fonte contraddice la risposta di riferimento: non valutabile.", color = MaterialTheme.colorScheme.error)
                     }
                     TextButton(onClick = { outcomeDialog = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("Modifica esito")
+                        Text(if (finalOutcome == null) "Valuta la tua risposta" else "Modifica esito")
                     }
                 }
             }
@@ -278,6 +318,21 @@ private fun CardStudyContent(
             if (petEnabled) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 MemoroPet(finalOutcome, Modifier.size(96.dp))
             }
+            if (practice) {
+                Button(enabled = !busy, onClick = {
+                    if (busy) return@Button
+                    busy = true
+                    scope.launch {
+                        try { repo.finishPractice(attemptId, System.currentTimeMillis()); onReviewed() }
+                        catch (e: Exception) { onError(e.message ?: "Esercitazione non salvata") }
+                        finally { busy = false }
+                    }
+                }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("nextPractice")) {
+                    Text(if (index + 1 == dueSize) "Completa ripasso libero" else "Prossima carta")
+                }
+                Text("La risposta resta in cronologia. La scadenza della carta non cambia.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
             Text("Quanto è stato facile ricordarla?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             val previewAt = remember(card.id, submitted) { System.currentTimeMillis() }
             val estimates = remember(card.scheduling, previewAt) { Rating.entries.associateWith { rating ->
@@ -305,6 +360,7 @@ private fun CardStudyContent(
                     }
                 }
             }
+            }
         } else if (petEnabled) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             MemoroPet(null, Modifier.size(96.dp))
         }
@@ -318,7 +374,7 @@ private fun CardStudyContent(
                         busy = true
                         scope.launch {
                             try {
-                                val latest = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer,
+                                val latest = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer, isPractice = practice,
                                     automaticOutcome = automatic, finalOutcome = outcome, feedback = feedback, state = AttemptState.EVALUATED,
                                     createdAtMillis = current?.createdAtMillis ?: System.currentTimeMillis(), updatedAtMillis = System.currentTimeMillis()))
                                 attemptId = latest.id; finalOutcome = outcome; outcomeDialog = false
@@ -331,7 +387,7 @@ private fun CardStudyContent(
         }, confirmButton = { TextButton(onClick = { outcomeDialog = false }) { Text("Chiudi") } })
 }
 
-private fun AnswerMode.studyLabel() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.EXACT -> "Esatta"; AnswerMode.AI -> "AI" }
+private fun AnswerMode.studyLabel() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.EXACT -> "Esatta"; AnswerMode.AI -> "AI"; AnswerMode.WRITTEN -> "Scritta"; AnswerMode.MULTIPLE_CHOICE -> "Scelta multipla" }
 private fun Outcome.studyLabel() = when (this) { Outcome.CORRECT -> "Corretta"; Outcome.PARTIAL -> "Parziale"; Outcome.WRONG -> "Errata"; Outcome.UNGRADABLE -> "Non valutabile" }
 private fun Rating.studyLabel() = when (this) { Rating.AGAIN -> "Da rifare"; Rating.HARD -> "Difficile"; Rating.GOOD -> "Buona"; Rating.EASY -> "Facile" }
 private fun Verdict.toOutcome() = when (this) { Verdict.CORRECT -> Outcome.CORRECT; Verdict.PARTIAL -> Outcome.PARTIAL; Verdict.WRONG -> Outcome.WRONG; Verdict.UNGRADABLE -> Outcome.UNGRADABLE }

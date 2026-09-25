@@ -56,7 +56,10 @@ internal fun HistoryScreen(repo: MemoroRepository) {
     }
     val query = search.trim()
     val visibleReviews = reviews.filter { query.isBlank() || cards[it.cardId]?.front.plainTitle().contains(query, ignoreCase = true) }
-    val drafts = data?.attempts.orEmpty().filter { it.state != AttemptState.REVIEWED }
+    val practices = data?.attempts.orEmpty().filter { it.state == AttemptState.PRACTICED }
+        .sortedByDescending { it.updatedAtMillis }
+        .filter { query.isBlank() || cards[it.cardId]?.front.plainTitle().contains(query, ignoreCase = true) }
+    val drafts = data?.attempts.orEmpty().filter { it.state == AttemptState.DRAFT || it.state == AttemptState.EVALUATED }
         .sortedByDescending { it.updatedAtMillis }
         .filter { query.isBlank() || cards[it.cardId]?.front.plainTitle().contains(query, ignoreCase = true) }
 
@@ -84,7 +87,7 @@ internal fun HistoryScreen(repo: MemoroRepository) {
                     OverviewStat("Dovute", due.toString(), Modifier.weight(1f))
                 }
             }
-            if (reviews.isNotEmpty() || drafts.isNotEmpty()) item {
+            if (reviews.isNotEmpty() || practices.isNotEmpty() || drafts.isNotEmpty()) item {
                 OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text("Cerca una carta") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
@@ -129,6 +132,46 @@ internal fun HistoryScreen(repo: MemoroRepository) {
                                         Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp)); Text("Cancella dati della risposta")
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (practices.isNotEmpty()) {
+                item { Text("Ripassi liberi", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) }
+                items(practices, key = { "practice-${it.id}" }) { attempt ->
+                    val expanded = expandedAttempt == attempt.id
+                    ElevatedCard(shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth().clickable { expandedAttempt = if (expanded) null else attempt.id }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(cards[attempt.cardId]?.front.plainTitle(), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                    Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(attempt.updatedAtMillis)),
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (expanded) "Chiudi dettagli" else "Apri dettagli")
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.Start) {
+                                LabelPill("Ripasso libero completato", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                                attempt.finalOutcome?.let { LabelPill(it.historyLabel(), MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer) }
+                            }
+                            if (expanded) {
+                                HorizontalDivider()
+                                Text("Modalità: ${attempt.mode.historyLabel()}")
+                                if (attempt.answer.isNotBlank()) Text("Risposta: ${attempt.answer}")
+                                attempt.automaticOutcome?.let { Text("Esito automatico: ${it.historyLabel()}") }
+                                attempt.finalOutcome?.let { Text("Esito finale: ${it.historyLabel()}") }
+                                val feedback = attempt.feedback.parseStoredFeedback()
+                                if (feedback != null) {
+                                    if (feedback.explanation.isNotBlank()) Text(feedback.explanation)
+                                    if (feedback.errors.isNotEmpty()) Text("Errori: ${feedback.errors.joinToString("; ")}")
+                                    if (feedback.omissions.isNotEmpty()) Text("Omissioni: ${feedback.omissions.joinToString("; ")}")
+                                } else if (attempt.feedback.isNotBlank()) Text(attempt.feedback)
+                                TextButton(onClick = { erase = attempt }) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp)); Text("Cancella ripasso libero")
                                 }
                             }
                         }
@@ -215,5 +258,5 @@ private fun String?.plainTitle(): String {
 
 private fun Rating.historyLabel() = when (this) { Rating.AGAIN -> "Da rifare"; Rating.HARD -> "Difficile"; Rating.GOOD -> "Buona"; Rating.EASY -> "Facile" }
 private fun Outcome.historyLabel() = when (this) { Outcome.CORRECT -> "Corretta"; Outcome.PARTIAL -> "Parziale"; Outcome.WRONG -> "Errata"; Outcome.UNGRADABLE -> "Non valutabile" }
-private fun AnswerMode.historyLabel() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.EXACT -> "Risposta esatta"; AnswerMode.AI -> "Correzione AI" }
-private fun AttemptState.historyLabel() = when (this) { AttemptState.DRAFT -> "Bozza"; AttemptState.EVALUATED -> "Da confermare"; AttemptState.REVIEWED -> "Completato" }
+private fun AnswerMode.historyLabel() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.WRITTEN -> "Scritta"; AnswerMode.EXACT -> "Risposta esatta"; AnswerMode.AI -> "Correzione AI"; AnswerMode.MULTIPLE_CHOICE -> "Scelta multipla" }
+private fun AttemptState.historyLabel() = when (this) { AttemptState.DRAFT -> "Bozza"; AttemptState.EVALUATED -> "Da confermare"; AttemptState.REVIEWED -> "Completato"; AttemptState.PRACTICED -> "Ripasso libero completato" }

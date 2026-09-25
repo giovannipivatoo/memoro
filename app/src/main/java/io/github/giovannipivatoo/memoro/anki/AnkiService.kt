@@ -74,8 +74,14 @@ class AnkiService(private val context: Context) {
                         val mid = modelIds[rawMid] ?: rawMid
                         val model = modelDefs.optJSONObject(mid.toString())
                         val fields = raw.optString("flds").split('\u001f')
+                        val recoveredChoice = AnkiMultipleChoice.decode(fields, model)
+                        val clearedChoice = model?.optString("name") == AnkiMultipleChoice.MODEL_NAME && fields.size in 2..3 && fields.drop(2).all(String::isBlank)
+                        if (model?.optString("name") == AnkiMultipleChoice.MODEL_NAME && recoveredChoice == null && !clearedChoice) {
+                            warnings += "Nota ${raw.optLong("id")}: metadati della scelta multipla non validi; importata come carta standard"
+                        }
                         val cards = byNote[raw.optLong("id")].orEmpty()
                         val kind = when {
+                            model?.optString("name") == AnkiMultipleChoice.MODEL_NAME -> NoteKind.BASIC
                             model?.optInt("type") == 1 || fields.any { "{{c" in it && "::" in it } -> NoteKind.CLOZE
                             cards.map { it.optInt("ord") }.distinct().size > 1 -> NoteKind.REVERSE
                             else -> NoteKind.BASIC
@@ -89,7 +95,10 @@ class AnkiService(private val context: Context) {
                         val templates = model?.optJSONArray("tmpls")
                         if (templates != null && !standardTemplate(kind, templates)) warnings += "Nota ${raw.optLong("id")}: template personalizzato conservato nell'originale; anteprima semplificata"
                         Note(id = raw.optLong("id"), deckId = did, guid = raw.optString("guid"),
-                            modifiedAtMillis = raw.optLong("mod") * 1000, kind = kind, fields = fields,
+                            modifiedAtMillis = raw.optLong("mod") * 1000, kind = kind,
+                            fields = recoveredChoice?.let { listOf(it.prompt, it.choice.options[it.choice.correctIndex]) }
+                                ?: if (clearedChoice) fields.take(2) else fields,
+                            multipleChoice = recoveredChoice?.choice,
                             tags = raw.optString("tags").trim().split(Regex("\\s+")).filter(String::isNotEmpty),
                             anki = AnkiMetadata(originalId = raw.optLong("id"), packageSha256 = digest, originalModelId = mid, rawJson = raw.toString()))
                     }
@@ -112,6 +121,7 @@ class AnkiService(private val context: Context) {
                         val face = AnkiRenderer.basicFaces(note?.fields.orEmpty(), note?.kind ?: NoteKind.BASIC, ord)
                         Card(id = raw.optLong("id"), noteId = nid, deckId = did, ordinal = ord,
                             front = face.first, back = face.second,
+                            modes = if (note?.multipleChoice != null) setOf(AnswerMode.MULTIPLE_CHOICE) else setOf(AnswerMode.CLASSIC),
                             scheduling = Scheduling(dueAtMillis = dueMillis, stability = cardData.optDouble("s", 0.0), difficulty = cardData.optDouble("d", 0.0),
                                 lastReviewAtMillis = cardData.optLong("lrt").takeIf { it > 0 }?.times(1000) ?: latestReview[raw.optLong("id")],
                                 reps = raw.optInt("reps"), lapses = raw.optInt("lapses"),
@@ -129,7 +139,10 @@ class AnkiService(private val context: Context) {
                     val collectionJson = JSONObject().put("col", col).put("models", modelDefs).put("decks", deckDefs)
                         .put("format", if (modern) "modern" else "legacy").toString()
                     val importedMedia = importMedia(zip, modern, repository, warnings)
-                    val fixedNotes = notes.map { note -> note.copy(fields = note.fields.map { renameMediaRefs(it, importedMedia.renamed) }) }
+                    val fixedNotes = notes.map { note -> note.copy(
+                        fields = note.fields.map { renameMediaRefs(it, importedMedia.renamed) },
+                        multipleChoice = note.multipleChoice?.copy(options = note.multipleChoice.options.map { renameMediaRefs(it, importedMedia.renamed) })) }
+                    if (fixedNotes.any { it.multipleChoice != null }) warnings += "Scelta multipla Memoro: in Anki le opzioni sono statiche, senza risposta interattiva"
                     val fixedNotesById = fixedNotes.associateBy(Note::id)
                     val fixedCards = cards.map { card ->
                         val note = fixedNotesById[card.noteId]
@@ -188,6 +201,7 @@ class AnkiService(private val context: Context) {
         for ((old, new) in names) {
             result = result.replace("[sound:$old]", "[sound:$new]")
             result = result.replace("src=\"$old\"", "src=\"$new\"").replace("src='$old'", "src='$new'")
+            result = result.replace("[image:media/$old]", "[image:media/$new]").replace("[audio:media/$old]", "[audio:media/$new]")
         }
         return result
     }

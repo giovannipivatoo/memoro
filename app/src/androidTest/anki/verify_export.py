@@ -39,7 +39,7 @@ def review_semantics(db):
     return sorted(rows(db, sql))
 
 
-def verify(package, native_legacy=False):
+def verify(package, native_legacy=False, multiple_choice=False, multiple_choice_removed=False):
     with tempfile.TemporaryDirectory(prefix="memoro-oracle-") as folder:
         folder = Path(folder)
         with zipfile.ZipFile(package) as archive:
@@ -62,14 +62,27 @@ def verify(package, native_legacy=False):
         source_decks = json.loads(source.execute("SELECT decks FROM col").fetchone()[0])
         expected_cards = card_semantics(source, lambda did: source_decks[str(did)]["name"])
         expected_reviews = review_semantics(source)
-        expected_counts = (3, 4, 0) if native_legacy else (6, 9, 2)
+        expected_counts = (1, 1, 0) if multiple_choice or multiple_choice_removed else (3, 4, 0) if native_legacy else (6, 9, 2)
         assert (len(expected_notes), len(expected_cards), len(expected_reviews)) == expected_counts
         assert len({row[0] for row in expected_notes}) == expected_counts[0]
-        assert len(media) == (0 if native_legacy else 2)
+        assert len(media) == (0 if native_legacy or multiple_choice or multiple_choice_removed else 2)
         models = json.loads(source.execute("SELECT models FROM col").fetchone()[0])
         used = {row[1] for row in expected_notes}
-        assert any(models[str(mid)]["type"] == 1 for mid in used), "cloze model absent"
-        assert any(len(models[str(mid)]["tmpls"]) == 2 for mid in used), "reverse model absent"
+        if multiple_choice or multiple_choice_removed:
+            fields = expected_notes[0][2].split("\x1f")
+            if multiple_choice:
+                assert len(fields) == 3 and fields[2].startswith("MemoroMC:v1:")
+                assert "<li>3</li>" in fields[0] and "<li>4</li>" in fields[0] and fields[1] == "4"
+            else:
+                assert fields == ["2 + 2?", "4", ""]
+            model = models[str(expected_notes[0][1])]
+            assert model["name"] == "Memoro Multiple Choice"
+            assert [field["name"] for field in model["flds"]] == ["Front", "Back", "MemoroMC"]
+            assert model["tmpls"][0]["qfmt"] == "{{Front}}"
+            assert "<script" not in model["tmpls"][0]["qfmt"].lower()
+        else:
+            assert any(models[str(mid)]["type"] == 1 for mid in used), "cloze model absent"
+            assert any(len(models[str(mid)]["tmpls"]) == 2 for mid in used), "reverse model absent"
         assert any(len(models[str(mid)]["tmpls"]) == 1 and models[str(mid)]["type"] == 0 for mid in used), "basic model absent"
 
         target = Collection(str(folder / "imported.anki2"))
@@ -96,5 +109,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path)
     parser.add_argument("--native-legacy", action="store_true", help="expect the native-only 3-note, 4-card legacy fixture")
+    parser.add_argument("--multiple-choice", action="store_true", help="expect one static multiple-choice Anki card with Memoro recovery metadata")
+    parser.add_argument("--multiple-choice-removed", action="store_true", help="expect three-field Basic card after removing interactive choices")
     args = parser.parse_args()
-    verify(args.package, args.native_legacy)
+    verify(args.package, args.native_legacy, args.multiple_choice, args.multiple_choice_removed)

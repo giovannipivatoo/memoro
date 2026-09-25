@@ -54,7 +54,8 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         dao.deleteCardsForDeck(id); dao.deleteNotesForDeck(id); dao.deleteDeck(id)
     }
 
-    override suspend fun saveNote(note: Note): Note = saveNoteInternal(note, importing = false)
+    override suspend fun saveNote(note: Note, preferredMode: AnswerMode?): Note =
+        saveNoteInternal(note, importing = false, preferredMode = preferredMode)
 
     override suspend fun saveNoteAndCards(note: Note, cards: List<Card>): Note = db.withTransaction {
         require(note.id > 0 && note.anki != null) { "Atomic card edit requires an imported note" }
@@ -67,15 +68,18 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         saved
     }
 
-    private suspend fun saveNoteInternal(note: Note, importing: Boolean): Note = db.withTransaction {
+    private suspend fun saveNoteInternal(note: Note, importing: Boolean, preferredMode: AnswerMode? = null): Note = db.withTransaction {
         require(dao.deck(note.deckId) != null) { "Unknown deck" }
         require(note.fields.isNotEmpty()) { "At least one field required" }
         require(note.anki != null || note.fields.size >= 2) { "Native notes need two fields" }
+        validateMultipleChoice(note)
+        require(preferredMode == null || note.anki == null) { "Preferred mode is for native notes" }
+        require(preferredMode != AnswerMode.MULTIPLE_CHOICE || note.multipleChoice != null) { "Multiple choice options required" }
         val previous = if (note.id != 0L) dao.note(note.id)?.let { json.decodeFromString<Note>(it.body) } else null
         val previousGuid = previous?.guid
         val rawGuid = note.anki?.rawJson?.let { runCatching { JSONObject(it).optString("guid") }.getOrNull() }
         val changed = previous == null || previous.fields != note.fields || previous.source != note.source ||
-            previous.tags != note.tags || previous.kind != note.kind || previous.deckId != note.deckId
+            previous.tags != note.tags || previous.kind != note.kind || previous.deckId != note.deckId || previous.multipleChoice != note.multipleChoice
         val incomingMod = note.modifiedAtMillis.takeIf { it > 0 } ?: note.anki?.rawJson?.let {
             runCatching { JSONObject(it).optLong("mod") * 1000L }.getOrNull()?.takeIf { millis -> millis > 0 }
         } ?: 0L
@@ -87,11 +91,11 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         val id = dao.putNote(NoteRow(prepared.id, prepared.deckId, prepared.anki?.originalId, json.encodeToString(prepared), prepared.anki?.collectionKey))
         val saved = prepared.copy(id = if (prepared.id == 0L) id else prepared.id)
         dao.putNote(NoteRow(saved.id, saved.deckId, saved.anki?.originalId, json.encodeToString(saved), saved.anki?.collectionKey))
-        if (saved.anki == null) regenerateCards(saved)
+        if (saved.anki == null) regenerateCards(saved, preferredMode)
         saved
     }
 
-    private suspend fun regenerateCards(note: Note) {
+    private suspend fun regenerateCards(note: Note, preferredMode: AnswerMode?) {
         val existing = dao.cardsForNote(note.id).map { json.decodeFromString<Card>(it.body) }.associateBy { it.ordinal }
         val generated = when (note.kind) {
             NoteKind.BASIC -> listOf(0 to (note.fields[0] to note.fields[1]))
@@ -108,7 +112,12 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         }
         for ((ordinal, pair) in generated) {
             val old = existing[ordinal]
-            val card = (old ?: Card(noteId = note.id, deckId = note.deckId, ordinal = ordinal, front = "", back = "")).copy(deckId = note.deckId, front = pair.first, back = pair.second, archived = false)
+            val defaultMode = if (note.multipleChoice == null) AnswerMode.WRITTEN else AnswerMode.MULTIPLE_CHOICE
+            val preservedModes = old?.modes?.let { if (note.multipleChoice == null) it - AnswerMode.MULTIPLE_CHOICE else it }
+            val card = (old ?: Card(noteId = note.id, deckId = note.deckId, ordinal = ordinal, front = "", back = "", modes = setOf(defaultMode)))
+                .copy(deckId = note.deckId, front = pair.first, back = pair.second, archived = false,
+                    modes = preferredMode?.let { setOf(it) } ?: preservedModes?.takeIf { it.isNotEmpty() } ?: setOf(defaultMode))
+            require(AnswerMode.MULTIPLE_CHOICE !in card.modes || note.multipleChoice != null) { "Multiple choice options required" }
             val id = dao.putCard(CardRow(card.id, card.deckId, card.noteId, card.anki?.originalId, card.scheduling.dueAtMillis, card.scheduling.importedQueue, card.archived, json.encodeToString(card), card.anki?.collectionKey))
             if (card.id == 0L) dao.putCard(CardRow(id, card.deckId, card.noteId, card.anki?.originalId, card.scheduling.dueAtMillis, card.scheduling.importedQueue, card.archived, json.encodeToString(card.copy(id = id)), card.anki?.collectionKey))
         }
@@ -123,19 +132,25 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
     }
 
     override suspend fun saveCard(card: Card): Card = db.withTransaction {
-        require(dao.note(card.noteId) != null) { "Unknown note" }
+        val note = dao.note(card.noteId)?.let { json.decodeFromString<Note>(it.body) } ?: error("Unknown note")
         require(card.modes.isNotEmpty())
+        require(AnswerMode.MULTIPLE_CHOICE !in card.modes || note.multipleChoice != null) { "Multiple choice options required" }
         val id = dao.putCard(CardRow(card.id, card.deckId, card.noteId, card.anki?.originalId, card.scheduling.dueAtMillis, card.scheduling.importedQueue, card.archived, json.encodeToString(card), card.anki?.collectionKey))
         card.copy(id = if (card.id == 0L) id else card.id).also { dao.putCard(CardRow(it.id, it.deckId, it.noteId, it.anki?.originalId, it.scheduling.dueAtMillis, it.scheduling.importedQueue, it.archived, json.encodeToString(it), it.anki?.collectionKey)) }
     }
 
     override suspend fun saveAttempt(attempt: Attempt): Attempt = db.withTransaction {
         val card = dao.card(attempt.cardId) ?: error("Unknown card")
-        require(attempt.mode == AnswerMode.CLASSIC || attempt.mode in json.decodeFromString<Card>(card.body).modes)
-        require(attempt.state != AttemptState.REVIEWED) { "Use commitReview" }
+        val savedCard = json.decodeFromString<Card>(card.body)
+        require(attempt.mode == AnswerMode.CLASSIC || attempt.mode == AnswerMode.WRITTEN || attempt.mode in savedCard.modes)
+        if (attempt.mode == AnswerMode.MULTIPLE_CHOICE) {
+            val note = dao.note(savedCard.noteId)?.let { json.decodeFromString<Note>(it.body) } ?: error("Unknown note")
+            require(note.multipleChoice != null) { "Multiple choice options required" }
+        }
+        require(attempt.state != AttemptState.REVIEWED && attempt.state != AttemptState.PRACTICED) { "Use completion method" }
         if (attempt.id != 0L) {
             val old = dao.attempt(attempt.id)?.let { json.decodeFromString<Attempt>(it.body) } ?: error("Unknown attempt")
-            require(old.cardId == attempt.cardId && old.mode == attempt.mode && old.state != AttemptState.REVIEWED)
+            require(old.cardId == attempt.cardId && old.mode == attempt.mode && old.isPractice == attempt.isPractice && old.state != AttemptState.REVIEWED && old.state != AttemptState.PRACTICED)
             require(old.state != AttemptState.EVALUATED || attempt.state == AttemptState.EVALUATED) { "Evaluated attempt cannot become draft" }
         }
         val id = dao.putAttempt(AttemptRow(attempt.id, attempt.cardId, attempt.state.name, json.encodeToString(attempt)))
@@ -155,6 +170,7 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
     override suspend fun commitReview(attemptId: Long, rating: Rating, nowMillis: Long): Review = db.withTransaction {
         dao.reviewForAttempt(attemptId)?.let { return@withTransaction json.decodeFromString<Review>(it.body) }
         val attempt = dao.attempt(attemptId)?.let { json.decodeFromString<Attempt>(it.body) } ?: error("Unknown attempt")
+        require(!attempt.isPractice) { "Practice attempts cannot schedule reviews" }
         require(attempt.state == AttemptState.EVALUATED) { "Attempt must be evaluated" }
         val card = dao.card(attempt.cardId)?.let { json.decodeFromString<Card>(it.body) } ?: error("Unknown card")
         val after = Fsrs6.review(card.scheduling, rating, nowMillis).copy(
@@ -168,6 +184,17 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
         val reviewedAttempt = attempt.copy(state = AttemptState.REVIEWED, updatedAtMillis = nowMillis)
         dao.putAttempt(AttemptRow(attempt.id, attempt.cardId, reviewedAttempt.state.name, json.encodeToString(reviewedAttempt)))
         saved
+    }
+
+    override suspend fun finishPractice(attemptId: Long, nowMillis: Long): Attempt = db.withTransaction {
+        val attempt = dao.attempt(attemptId)?.let { json.decodeFromString<Attempt>(it.body) } ?: error("Unknown attempt")
+        require(attempt.isPractice) { "Not a practice attempt" }
+        if (attempt.state == AttemptState.PRACTICED) return@withTransaction attempt
+        require(attempt.state == AttemptState.EVALUATED) { "Practice attempt must be evaluated" }
+        require(dao.reviewForAttempt(attemptId) == null) { "Practice attempt has a review" }
+        attempt.copy(state = AttemptState.PRACTICED, updatedAtMillis = nowMillis).also {
+            dao.putAttempt(AttemptRow(it.id, it.cardId, it.state.name, json.encodeToString(it)))
+        }
     }
 
     override suspend fun snapshot(): ArchiveSnapshot = db.withTransaction {
@@ -218,6 +245,7 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
                 source = priorNote?.source?.takeUnless { it == SourceReference() } ?: incoming.source,
                 tags = if (keepLocalFields) priorNote!!.tags else incoming.tags,
                 kind = if (keepLocalFields) priorNote!!.kind else incoming.kind,
+                multipleChoice = if (keepLocalFields) priorNote!!.multipleChoice else incoming.multipleChoice,
                 locallyEdited = keepLocalFields,
                 modifiedAtMillis = if (keepLocalFields) priorNote!!.modifiedAtMillis else incomingMod,
                 anki = if (keepLocalFields) priorNote!!.anki ?: incoming.anki else incoming.anki)
@@ -232,10 +260,12 @@ class RoomMemoroRepository private constructor(private val context: Context, pri
             val hasLocalProgress = current != null && dao.lastLocalReview(current.id) != null
             val imported = card.copy(id = current?.id ?: 0, noteId = mappedNoteId, deckId = deckIds[card.deckId] ?: error("Missing imported deck"))
             val localNote = dao.note(mappedNoteId)?.let { json.decodeFromString<Note>(it.body) }
+            val preservedModes = currentCard?.modes ?: imported.modes
+            val compatibleModes = if (localNote?.multipleChoice == null) preservedModes - AnswerMode.MULTIPLE_CHOICE else preservedModes
             val saved = saveCard(imported.copy(
                 deckId = if (localNote?.locallyEdited == true) localNote.deckId else imported.deckId,
                 scheduling = if (hasLocalProgress) currentCard!!.scheduling else imported.scheduling,
-                modes = currentCard?.modes ?: imported.modes,
+                modes = compatibleModes.takeIf { it.isNotEmpty() } ?: (imported.modes - AnswerMode.MULTIPLE_CHOICE).ifEmpty { setOf(AnswerMode.CLASSIC) },
                 front = if (localNote?.locallyEdited == true) currentCard?.front ?: imported.front else imported.front,
                 back = if (localNote?.locallyEdited == true) currentCard?.back ?: imported.back else imported.back))
             cardIds[card.id] = saved.id
@@ -332,8 +362,17 @@ private fun modelFieldNames(collectionJson: String?, modelId: Long): List<String
     (0 until fields.length()).map { fields.optJSONObject(it)?.optString("name").orEmpty() }
 }.getOrNull()
 
+private fun validateMultipleChoice(note: Note) {
+    val choice = note.multipleChoice ?: return
+    require(note.kind == NoteKind.BASIC) { "Multiple choice requires a basic note" }
+    require(choice.options.size in 2..6 && choice.correctIndex in choice.options.indices) { "Invalid multiple choice options" }
+    require(choice.options.all { it.isNotBlank() }) { "Multiple choice options cannot be blank" }
+    require(choice.options.map { it.trim().lowercase() }.distinct().size == choice.options.size) { "Multiple choice options must be distinct" }
+    require(note.fields.getOrNull(1) == choice.options[choice.correctIndex]) { "Answer must match the correct option" }
+}
+
 fun validateSnapshot(snapshot: ArchiveSnapshot) {
-    require(snapshot.version == 1) { "Unsupported backup version" }
+    require(snapshot.version in 1..2) { "Unsupported backup version" }
     fun <T> unique(values: List<T>) { require(values.size == values.toSet().size) { "Duplicate IDs" } }
     require(snapshot.decks.all { it.id > 0 } && snapshot.notes.all { it.id > 0 } && snapshot.cards.all { it.id > 0 })
     require(snapshot.attempts.all { it.id > 0 } && snapshot.reviews.all { it.id > 0 })
@@ -344,7 +383,11 @@ fun validateSnapshot(snapshot: ArchiveSnapshot) {
     val cards = snapshot.cards.map { it.id }.toSet()
     val attempts = snapshot.attempts.map { it.id }.toSet()
     require(snapshot.notes.all { it.deckId in decks })
+    snapshot.notes.forEach(::validateMultipleChoice)
     require(snapshot.cards.all { it.noteId in notes && it.deckId in decks })
+    val notesById = snapshot.notes.associateBy { it.id }
+    require(snapshot.cards.all { card -> card.modes.isNotEmpty() &&
+        (AnswerMode.MULTIPLE_CHOICE !in card.modes || notesById[card.noteId]?.multipleChoice != null) })
     require(snapshot.attempts.all { it.cardId in cards })
     require(snapshot.reviews.all { it.cardId in cards && (it.attemptId == null || it.attemptId in attempts) })
     require(snapshot.reviews.mapNotNull { it.attemptId }.distinct().size == snapshot.reviews.count { it.attemptId != null })
@@ -352,6 +395,7 @@ fun validateSnapshot(snapshot: ArchiveSnapshot) {
     require(snapshot.reviews.all { it.attemptId == null || attemptCards[it.attemptId] == it.cardId })
     val reviewedIds = snapshot.reviews.mapNotNull { it.attemptId }.toSet()
     require(snapshot.attempts.all { (it.state == AttemptState.REVIEWED) == (it.id in reviewedIds) })
+    require(snapshot.attempts.all { (it.state != AttemptState.PRACTICED || it.isPractice) && (!it.isPractice || it.id !in reviewedIds) })
     require(snapshot.files.all { it.path.isNotBlank() && !it.path.startsWith('/') && it.path.split('/').none { segment -> segment.isBlank() || segment == "." || segment == ".." || '\\' in segment } })
     require(snapshot.files.all { it.size >= 0 && it.sha256.matches(Regex("[0-9a-f]{64}")) })
     val files = snapshot.files.map { it.path }.toSet()

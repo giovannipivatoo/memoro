@@ -11,6 +11,8 @@ import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -20,6 +22,56 @@ import org.json.JSONObject
 
 @RunWith(AndroidJUnit4::class)
 class RepositoryPersistenceTest {
+    @Test fun versionOneBackupDecodesWithoutNewFields() {
+        val legacy = """{"version":1,"decks":[{"id":1,"name":"Old"}],"notes":[{"id":2,"deckId":1,"fields":["Q","A"]}],"cards":[{"id":3,"noteId":2,"deckId":1,"front":"Q","back":"A"}],"attempts":[{"id":4,"cardId":3,"mode":"CLASSIC","createdAtMillis":1}]}"""
+        val snapshot = Json.decodeFromString<ArchiveSnapshot>(legacy)
+        validateSnapshot(snapshot)
+        assertEquals(1, snapshot.version)
+        assertEquals(null, snapshot.notes.single().multipleChoice)
+        assertEquals(false, snapshot.attempts.single().isPractice)
+        assertEquals(2, ArchiveSnapshot().version)
+    }
+
+    @Test fun multipleChoiceValidationAndPracticeRoundTrip() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context.deleteDatabase("memoro.db")
+        val repo = RoomMemoroRepository.open(context)
+        try {
+            val deck = repo.saveDeck(Deck(name = "Practice"))
+            val choice = MultipleChoice(listOf("Roma", "Milano", "Torino"), 0)
+            val invalid = Note(deckId = deck.id, fields = listOf("Capitale?", "Milano"), multipleChoice = choice)
+            assertTrue(runCatching { repo.saveNote(invalid) }.isFailure)
+            assertTrue(runCatching { repo.saveNote(invalid.copy(fields = listOf("Capitale?", "Roma"),
+                multipleChoice = MultipleChoice(listOf("Roma", " roma "), 0))) }.isFailure)
+            val note = repo.saveNote(invalid.copy(fields = listOf("Capitale?", "Roma")))
+            val card = repo.getCard(repo.snapshot().cards.single().id)!!
+            assertEquals(setOf(AnswerMode.MULTIPLE_CHOICE), card.modes)
+            val before = card.scheduling
+            val now = System.currentTimeMillis()
+            val attempt = repo.saveAttempt(Attempt(cardId = card.id, mode = AnswerMode.MULTIPLE_CHOICE,
+                answer = "Roma", automaticOutcome = Outcome.CORRECT, finalOutcome = Outcome.CORRECT,
+                state = AttemptState.EVALUATED, createdAtMillis = now, isPractice = true))
+            assertTrue(runCatching { repo.commitReview(attempt.id, Rating.GOOD, now) }.isFailure)
+            val completed = repo.finishPractice(attempt.id, now + 1)
+            assertEquals(AttemptState.PRACTICED, completed.state)
+            assertEquals(completed, repo.finishPractice(attempt.id, now + 2))
+            assertTrue(runCatching { repo.saveAttempt(completed.copy(state = AttemptState.EVALUATED)) }.isFailure)
+            assertEquals(before, repo.getCard(card.id)!!.scheduling)
+            assertTrue(repo.snapshot().reviews.isEmpty())
+            assertEquals(choice, repo.getNote(note.id)!!.multipleChoice)
+            val backup = ByteArrayOutputStream().also { BackupManager(context, repo).export(it) }.toByteArray()
+            BackupManager(context, repo).restore(ByteArrayInputStream(backup))
+            assertEquals(choice, repo.getNote(note.id)!!.multipleChoice)
+            assertEquals(AttemptState.PRACTICED, repo.snapshot().attempts.single().state)
+            assertEquals(before, repo.getCard(card.id)!!.scheduling)
+            repo.saveNote(note.copy(multipleChoice = null))
+            assertEquals(setOf(AnswerMode.WRITTEN), repo.getCard(card.id)!!.modes)
+            assertEquals(before, repo.getCard(card.id)!!.scheduling)
+            repo.saveNote(note.copy(multipleChoice = null), preferredMode = AnswerMode.CLASSIC)
+            assertEquals(setOf(AnswerMode.CLASSIC), repo.getCard(card.id)!!.modes)
+        } finally { repo.close() }
+    }
+
     @Test fun reimportUsesGuidAndPreservesNewerLocalEdit() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         context.deleteDatabase("memoro.db")

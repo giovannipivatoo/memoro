@@ -11,3 +11,7 @@ Il codice originale di Memoro è BSD-2-Clause. Le licenze dei componenti rimango
 | Zstandard (in zstd-jni) | BSD-3-Clause | https://github.com/facebook/zstd/tree/v1.5.7 |
 
 I testi delle licenze runtime sono inclusi negli asset `licenses/` dell'APK. Attribuzione e provenienza FSRS sono documentate separatamente insieme al codice dello scheduler.
+
+## Asset del pet
+
+`luoxiaohei_sprites.webp` proviene dal pet personale **罗小黑** (`luoxiaohei2d`) indicato dall'utente. Il file originale è riutilizzato senza modifiche; le animazioni sono riprodotte da codice Compose originale di Memoro. La descrizione del pet indica Luo Xiaohei come riferimento visivo. Provenienza e precedente asset della v0.2 sono documentati in [UI-UX.md](docs/UI-UX.md).

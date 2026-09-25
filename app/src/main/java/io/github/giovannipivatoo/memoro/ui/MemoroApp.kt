@@ -26,7 +26,7 @@ private sealed interface Page {
     data object Decks : Page
     data class DeckDetail(val id: Long) : Page
     data class NoteEditor(val deckId: Long, val noteId: Long = 0) : Page
-    data class Study(val deckId: Long?) : Page
+    data class Study(val deckId: Long?, val practice: Boolean = false) : Page
     data object History : Page
     data object Settings : Page
 }
@@ -38,14 +38,14 @@ private val pageSaver = listSaver<Page, String>(
         Page.Settings -> listOf("settings")
         is Page.DeckDetail -> listOf("deck", page.id.toString())
         is Page.NoteEditor -> listOf("note", page.deckId.toString(), page.noteId.toString())
-        is Page.Study -> listOf("study", page.deckId?.toString().orEmpty())
+        is Page.Study -> listOf("study", page.deckId?.toString().orEmpty(), page.practice.toString())
     } },
     restore = { parts -> when (parts.firstOrNull()) {
         "history" -> Page.History
         "settings" -> Page.Settings
         "deck" -> Page.DeckDetail(parts[1].toLong())
         "note" -> Page.NoteEditor(parts[1].toLong(), parts[2].toLong())
-        "study" -> Page.Study(parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.toLong())
+        "study" -> Page.Study(parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.toLong(), parts.getOrNull(2)?.toBoolean() ?: false)
         else -> Page.Decks
     } },
 )
@@ -93,7 +93,7 @@ fun MemoroApp(repo: MemoroRepository, actions: AppActions, ai: DeepSeekClient = 
         Page.Decks -> "memoro"
         is Page.DeckDetail -> deck?.name ?: "Mazzo"
         is Page.NoteEditor -> if (current.noteId == 0L) "Nuova nota" else "Modifica nota"
-        is Page.Study -> if (current.deckId == null) "Ripasso" else deck?.name ?: "Ripasso"
+        is Page.Study -> if (current.practice) "Ripasso libero" else if (current.deckId == null) "Ripasso" else deck?.name ?: "Ripasso"
         Page.History -> "Cronologia"
         Page.Settings -> "Impostazioni"
     }
@@ -121,9 +121,9 @@ fun MemoroApp(repo: MemoroRepository, actions: AppActions, ai: DeepSeekClient = 
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (val current = page) {
                 Page.Decks -> DecksScreen(repo, actions.importApkg, actions.petEnabled(), onOpen = { page = Page.DeckDetail(it) }, onStudy = { page = Page.Study(null) }, onError = ::showError)
-                is Page.DeckDetail -> DeckScreen(repo, current.id, onEdit = { page = Page.NoteEditor(current.id, it); editorDirty = false }, onStudy = { page = Page.Study(current.id) }, onError = ::showError)
+                is Page.DeckDetail -> DeckScreen(repo, current.id, onEdit = { page = Page.NoteEditor(current.id, it); editorDirty = false }, onStudy = { page = Page.Study(current.id) }, onPractice = { page = Page.Study(current.id, practice = true) }, onError = ::showError)
                 is Page.NoteEditor -> NoteEditorScreen(repo, current.deckId, current.noteId, onDirtyChange = { editorDirty = it }, onDone = { editorDirty = false; page = Page.DeckDetail(current.deckId) }, onError = ::showError)
-                is Page.Study -> StudyScreen(repo, current.deckId, ai, actions.apiKey, actions.model, actions.petEnabled(), onError = ::showError, onDone = { page = current.deckId?.let { Page.DeckDetail(it) } ?: Page.Decks })
+                is Page.Study -> StudyScreen(repo, current.deckId, ai, actions.apiKey, actions.model, actions.petEnabled(), onError = ::showError, onDone = { page = current.deckId?.let { Page.DeckDetail(it) } ?: Page.Decks }, practice = current.practice)
                 Page.History -> HistoryScreen(repo)
                 Page.Settings -> SettingsScreen(actions, onMessage = ::showError)
             }
