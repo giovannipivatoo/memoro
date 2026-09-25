@@ -1,31 +1,23 @@
 // SPDX-License-Identifier: BSD-2-Clause
 package io.github.giovannipivatoo.memoro.ui
 
-import android.provider.Settings
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.giovannipivatoo.memoro.ai.*
 import io.github.giovannipivatoo.memoro.anki.AnkiRenderer
 import io.github.giovannipivatoo.memoro.data.*
+import io.github.giovannipivatoo.memoro.study.Fsrs6
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
@@ -39,29 +31,50 @@ import kotlinx.serialization.json.contentOrNull
 @Composable
 internal fun StudyScreen(
     repo: MemoroRepository,
-    deckId: Long,
+    deckId: Long?,
     ai: DeepSeekClient,
     apiKey: () -> String,
     model: () -> String,
     petEnabled: Boolean,
     onError: (String) -> Unit,
+    onDone: () -> Unit = {},
 ) {
     var due by remember(deckId) { mutableStateOf<List<Card>>(emptyList()) }
     var loading by remember(deckId) { mutableStateOf(true) }
     var index by remember(deckId) { mutableIntStateOf(0) }
-    val scope = rememberCoroutineScope()
     LaunchedEffect(deckId) { try { due = repo.dueCards(System.currentTimeMillis(), deckId) } catch (e: Exception) { onError(e.message ?: "Impossibile caricare le carte") }; loading = false }
     if (loading) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
     val card = due.getOrNull(index)
     if (card == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (petEnabled) Kitten(Outcome.CORRECT)
-                Text(if (due.isEmpty()) "Nessuna carta in scadenza." else "Sessione completata.", style = MaterialTheme.typography.headlineSmall)
+            Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (petEnabled) MemoroPet(if (due.isEmpty()) null else Outcome.CORRECT, Modifier.size(96.dp))
+                Text(if (due.isEmpty()) "Per ora hai finito" else "Sessione completata", style = MaterialTheme.typography.headlineMedium)
+                Text(if (due.isEmpty()) "Nessuna carta in scadenza." else "Hai ripassato tutte le carte previste.", style = MaterialTheme.typography.bodyLarge)
+                Button(onClick = onDone, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (deckId == null) "Torna alla home" else "Torna al mazzo") }
             }
         }
         return
     }
+    key(card.id) {
+        CardStudyContent(repo, card, index, due.size, ai, apiKey, model, petEnabled, onError) { index++ }
+    }
+}
+
+@Composable
+private fun CardStudyContent(
+    repo: MemoroRepository,
+    card: Card,
+    index: Int,
+    dueSize: Int,
+    ai: DeepSeekClient,
+    apiKey: () -> String,
+    model: () -> String,
+    petEnabled: Boolean,
+    onError: (String) -> Unit,
+    onReviewed: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
     val attempts by produceState<List<Attempt>?>(initialValue = null, card.id) {
         repo.observeAttempts(card.id).collect { value = it }
     }
@@ -87,6 +100,9 @@ internal fun StudyScreen(
     var busy by remember(card.id) { mutableStateOf(false) }
     var technicalError by remember(card.id) { mutableStateOf("") }
     var hydrated by remember(card.id) { mutableStateOf(false) }
+    var modeExpanded by remember(card.id) { mutableStateOf(false) }
+    var outcomeDialog by remember(card.id) { mutableStateOf(false) }
+    var sourceExpanded by remember(card.id) { mutableStateOf(false) }
     val saveMutex = remember(card.id) { Mutex() }
     LaunchedEffect(note?.id, card.id) {
         if (note != null && current == null && attemptId == 0L && answer.isEmpty() && mode == AnswerMode.CLASSIC) {
@@ -117,30 +133,66 @@ internal fun StudyScreen(
         }
     }
     if (current != null && !hydrated) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Carta ${index + 1} di ${due.size}", style = MaterialTheme.typography.labelLarge)
-        StudyFace(question, repo, Modifier.testTag("question"))
-        if (AnswerMode.EXACT in card.modes && exactExpected == null && note != null) Text("Confronto esatto non disponibile: la risposta contiene solo media o più parti cloze.", style = MaterialTheme.typography.bodySmall)
-        note?.source?.let { source ->
-            if (submitted && source.excerpt.isNotBlank()) ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Estratto fonte", fontWeight = FontWeight.Bold)
-                    Text(source.excerpt)
-                    if (source.title.isNotBlank() || source.page.isNotBlank()) Text(listOf(source.title, source.page).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-                }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("STUDIO  ·  ${index + 1} / ${dueSize}", color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            LinearProgressIndicator(progress = { index.toFloat() / dueSize }, modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.surfaceVariant)
+        }
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Text("DOMANDA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                StudyFace(question, repo, Modifier.fillMaxWidth().testTag("question"), MaterialTheme.typography.headlineSmall)
             }
         }
-        if (availableModes.size > 1 && !submitted) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                availableModes.sortedBy { it.ordinal }.forEach { option -> FilterChip(selected = mode == option, onClick = { mode = option; attemptId = 0L }, label = { Text(option.studyLabel()) }) }
-            }
-        } else Text("Modalità: ${mode.studyLabel()}", style = MaterialTheme.typography.labelMedium)
-        if (mode != AnswerMode.CLASSIC) {
-            OutlinedTextField(answer, { answer = it }, enabled = !busy, readOnly = submitted, label = { Text("La tua risposta") }, minLines = 3,
-                modifier = Modifier.fillMaxWidth().testTag("answerInput"))
+        if (AnswerMode.EXACT in card.modes && exactExpected == null && note != null) {
+            Text("Confronto esatto non disponibile per questa risposta.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (!submitted) {
-            Button(enabled = !busy && (mode == AnswerMode.CLASSIC || answer.isNotBlank()), onClick = {
+            if (mode !in availableModes) Text("Questa modalità non è più disponibile per la carta. Scegline un'altra per continuare; la bozza resta salvata.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            if (availableModes.size > 1 || mode !in availableModes) Box {
+                OutlinedButton(onClick = { modeExpanded = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Come rispondere: ${mode.studyLabel()}")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                }
+                DropdownMenu(expanded = modeExpanded, onDismissRequest = { modeExpanded = false }) {
+                    availableModes.sortedBy { it.ordinal }.forEach { option ->
+                        DropdownMenuItem(text = { Text(option.studyLabel()) }, onClick = {
+                            modeExpanded = false
+                            if (option != mode) {
+                                busy = true
+                                scope.launch {
+                                    var newDraftSaved = false
+                                    try {
+                                        saveMutex.withLock {
+                                            val previousId = attemptId
+                                            val now = System.currentTimeMillis()
+                                            val saved = repo.saveAttempt(Attempt(cardId = card.id, mode = option, answer = answer,
+                                                state = AttemptState.DRAFT, createdAtMillis = current?.createdAtMillis ?: now, updatedAtMillis = now))
+                                            attemptId = saved.id; mode = option; hydrated = true
+                                            newDraftSaved = true
+                                            if (previousId != 0L) repo.deleteAttemptPersonalData(previousId)
+                                        }
+                                    } catch (e: Exception) { technicalError = if (newDraftSaved) "Modalità salvata; vecchia bozza non rimossa" else e.message ?: "Modalità non cambiata" }
+                                    finally { busy = false }
+                                }
+                            }
+                        })
+                    }
+                }
+            } else Text("Come rispondere: ${mode.studyLabel()}", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (mode != AnswerMode.CLASSIC) {
+                OutlinedTextField(answer, { answer = it }, enabled = !busy, label = { Text("La tua risposta") }, minLines = 3,
+                    shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().testTag("answerInput"))
+            }
+            Button(enabled = !busy && mode in availableModes && (mode == AnswerMode.CLASSIC || answer.isNotBlank()), onClick = {
                 if (busy) return@Button
                 busy = true
                 scope.launch {
@@ -153,7 +205,7 @@ internal fun StudyScreen(
                                 attemptId = saved.id; submitted = true
                             }
                             AnswerMode.EXACT -> {
-                                val outcome = gradeExact(answer, exactExpected ?: textReference)
+                                val outcome = gradeExact(answer, requireNotNull(exactExpected))
                                 val saved = repo.saveAttempt(draft.copy(automaticOutcome = outcome, finalOutcome = outcome, state = AttemptState.EVALUATED, updatedAtMillis = System.currentTimeMillis()))
                                 attemptId = saved.id; automatic = outcome; finalOutcome = outcome; submitted = true
                             }
@@ -172,63 +224,111 @@ internal fun StudyScreen(
                     } catch (e: Exception) { technicalError = e.message ?: "Operazione non riuscita. La bozza rimane disponibile." }
                     busy = false
                 }
-            }, modifier = Modifier.fillMaxWidth().testTag("submitAnswer")) { Text(if (busy) "Attendi…" else if (mode == AnswerMode.CLASSIC) "Mostra risposta" else "Invia risposta") }
-            if (mode == AnswerMode.AI) OutlinedButton(enabled = !busy && answer.isNotBlank(), onClick = {
+            }, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("submitAnswer")) {
+                Text(if (busy) "Attendi…" else if (mode == AnswerMode.CLASSIC) "Mostra risposta" else "Invia risposta")
+            }
+            if (mode == AnswerMode.AI) OutlinedButton(enabled = !busy && answer.isNotBlank() && mode in availableModes, onClick = {
                 if (busy) return@OutlinedButton
                 busy = true
                 scope.launch {
-                try {
-                    val draft = saveDraft()
-                    val saved = repo.saveAttempt(draft.copy(state = AttemptState.EVALUATED, updatedAtMillis = System.currentTimeMillis()))
-                    attemptId = saved.id; automatic = null; finalOutcome = null; feedback = ""; submitted = true; technicalError = ""
-                } catch (e: Exception) { technicalError = e.message ?: "Operazione non riuscita" }
-                busy = false
-            } }, modifier = Modifier.testTag("selfAssess")) { Text("Valuta da me") }
+                    try {
+                        val draft = saveDraft()
+                        val saved = repo.saveAttempt(draft.copy(state = AttemptState.EVALUATED, updatedAtMillis = System.currentTimeMillis()))
+                        attemptId = saved.id; automatic = null; finalOutcome = null; feedback = ""; submitted = true; technicalError = ""
+                    } catch (e: Exception) { technicalError = e.message ?: "Operazione non riuscita" }
+                    busy = false
+                }
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("selfAssess")) { Text("Valuta da me") }
         }
         if (technicalError.isNotBlank()) Text(technicalError, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("technicalError"))
         if (submitted) {
-            HorizontalDivider()
-            Text("Risposta di riferimento", style = MaterialTheme.typography.titleMedium)
-            StudyFace(reference, repo, Modifier.testTag("referenceAnswer"))
-            if (automatic != null) Text("Esito automatico: ${automatic!!.studyLabel()}")
-            val parsed = feedback.parseStoredFeedback()
-            if (parsed != null) {
-                Text(parsed.explanation)
-                if (parsed.errors.isNotEmpty()) Text("Errori: ${parsed.errors.joinToString("; ")}")
-                if (parsed.omissions.isNotEmpty()) Text("Omissioni: ${parsed.omissions.joinToString("; ")}")
-                if (parsed.sourceConflict) Text("La fonte contraddice la risposta di riferimento: non valutabile.", color = MaterialTheme.colorScheme.error)
-            }
-            Text("Rettifica l'esito", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Outcome.entries.forEach { outcome ->
-                    FilterChip(selected = finalOutcome == outcome, enabled = !busy, onClick = {
-                        if (busy) return@FilterChip
-                        busy = true
-                        scope.launch { try {
-                            val latest = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer,
-                                automaticOutcome = automatic, finalOutcome = outcome, feedback = feedback, state = AttemptState.EVALUATED,
-                                createdAtMillis = current?.createdAtMillis ?: System.currentTimeMillis(), updatedAtMillis = System.currentTimeMillis()))
-                            attemptId = latest.id; finalOutcome = outcome
-                        } catch (e: Exception) { onError(e.message ?: "Rettifica non salvata") } finally { busy = false } }
-                    }, label = { Text(outcome.studyLabel()) })
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("RISPOSTA DI RIFERIMENTO", style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    StudyFace(reference, repo, Modifier.fillMaxWidth().testTag("referenceAnswer"), MaterialTheme.typography.titleLarge)
+                    if (mode != AnswerMode.CLASSIC && answer.isNotBlank()) Text("La tua risposta: $answer", style = MaterialTheme.typography.bodyLarge)
+                    if (automatic != null) Text("Esito automatico: ${automatic!!.studyLabel()}", style = MaterialTheme.typography.bodyMedium)
+                    if (finalOutcome != null && finalOutcome != automatic) Text("Esito finale: ${finalOutcome!!.studyLabel()}", fontWeight = FontWeight.SemiBold)
+                    val parsed = feedback.parseStoredFeedback()
+                    if (parsed != null) {
+                        if (parsed.explanation.isNotBlank()) Text(parsed.explanation)
+                        if (parsed.errors.isNotEmpty()) Text("Errori: ${parsed.errors.joinToString("; ")}")
+                        if (parsed.omissions.isNotEmpty()) Text("Omissioni: ${parsed.omissions.joinToString("; ")}")
+                        if (parsed.sourceConflict) Text("La fonte contraddice la risposta di riferimento: non valutabile.", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { outcomeDialog = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("Modifica esito")
+                    }
                 }
             }
-            if (petEnabled) Kitten(finalOutcome)
-            Text("Come vuoi programmare la prossima volta?", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Rating.entries.forEach { rating ->
-                    FilledTonalButton(enabled = !busy, onClick = {
-                        if (busy) return@FilledTonalButton
+            note?.source?.takeIf { it.excerpt.isNotBlank() }?.let { source ->
+                OutlinedButton(onClick = { sourceExpanded = !sourceExpanded }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(if (sourceExpanded) "Nascondi fonte" else "Vedi fonte")
+                }
+                if (sourceExpanded) Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Estratto fonte", fontWeight = FontWeight.Bold)
+                        Text(source.excerpt)
+                        if (source.title.isNotBlank() || source.page.isNotBlank()) Text(listOf(source.title, source.page).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            if (petEnabled) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                MemoroPet(finalOutcome, Modifier.size(96.dp))
+            }
+            Text("Quanto è stato facile ricordarla?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            val previewAt = remember(card.id, submitted) { System.currentTimeMillis() }
+            val estimates = remember(card.scheduling, previewAt) { Rating.entries.associateWith { rating ->
+                runCatching { (Fsrs6.review(card.scheduling, rating, previewAt).dueAtMillis - previewAt).coerceAtLeast(0) }
+                    .getOrNull()?.let(::studyInterval) ?: "—"
+            } }
+            Rating.entries.chunked(2).forEach { pair ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    pair.forEach { rating ->
+                        FilledTonalButton(enabled = !busy, onClick = {
+                            if (busy) return@FilledTonalButton
+                            busy = true
+                            scope.launch {
+                                try { repo.commitReview(attemptId, rating, System.currentTimeMillis()); onReviewed() }
+                                catch (e: Exception) { onError(e.message ?: "Ripasso non salvato") }
+                                finally { busy = false }
+                            }
+                        }, shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(12.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 64.dp).testTag("rate-${rating.name}")) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(rating.studyLabel(), style = MaterialTheme.typography.labelLarge)
+                                Text(estimates[rating].orEmpty(), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (petEnabled) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            MemoroPet(null, Modifier.size(96.dp))
+        }
+    }
+    if (outcomeDialog) AlertDialog(onDismissRequest = { outcomeDialog = false }, title = { Text("Modifica esito") },
+        text = {
+            Column {
+                Outcome.entries.forEach { outcome ->
+                    TextButton(enabled = !busy, onClick = {
+                        if (busy) return@TextButton
                         busy = true
                         scope.launch {
-                        try { repo.commitReview(attemptId, rating, System.currentTimeMillis()); index++ }
-                        catch (e: Exception) { onError(e.message ?: "Ripasso non salvato") }
-                        busy = false
-                    } }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("rate-${rating.name}")) { Text(rating.studyLabel(), style = MaterialTheme.typography.labelSmall) }
+                            try {
+                                val latest = repo.saveAttempt(Attempt(id = attemptId, cardId = card.id, mode = mode, answer = answer,
+                                    automaticOutcome = automatic, finalOutcome = outcome, feedback = feedback, state = AttemptState.EVALUATED,
+                                    createdAtMillis = current?.createdAtMillis ?: System.currentTimeMillis(), updatedAtMillis = System.currentTimeMillis()))
+                                attemptId = latest.id; finalOutcome = outcome; outcomeDialog = false
+                            } catch (e: Exception) { onError(e.message ?: "Rettifica non salvata") }
+                            finally { busy = false }
+                        }
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(outcome.studyLabel()) }
                 }
             }
-        } else if (petEnabled) Kitten(null)
-    }
+        }, confirmButton = { TextButton(onClick = { outcomeDialog = false }) { Text("Chiudi") } })
 }
 
 private fun AnswerMode.studyLabel() = when (this) { AnswerMode.CLASSIC -> "Classica"; AnswerMode.EXACT -> "Esatta"; AnswerMode.AI -> "AI" }
@@ -249,43 +349,9 @@ internal fun String.parseStoredFeedback(): Evaluation? = try {
         (obj["sourceConflict"] as JsonPrimitive).content.toBoolean())
 } catch (_: Exception) { null }
 
-/** A silent, fixed-size vector pet; static poses also respect reduced-motion settings. */
-@Composable
-private fun Kitten(outcome: Outcome?) {
-    val mood = when (outcome) { Outcome.CORRECT -> "festeggia"; Outcome.PARTIAL, Outcome.WRONG -> "incoraggia"; Outcome.UNGRADABLE -> "pensieroso"; null -> "attende" }
-    val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
-    val reducedMotion = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
-    val scale = remember { Animatable(1f) }
-    LaunchedEffect(outcome, reducedMotion) {
-        if (!reducedMotion && outcome != null) {
-            scale.snapTo(0.94f); scale.animateTo(1.08f, tween(130)); scale.animateTo(1f, tween(180))
-        }
-    }
-    Canvas(Modifier.size(92.dp).graphicsLayer(scaleX = scale.value, scaleY = scale.value).semantics { contentDescription = "Gattino $mood" }) {
-        val black = Color(0xFF171717)
-        val white = Color.White
-        val s = size.width / 100f
-        val ears = Path().apply { moveTo(18*s, 38*s); lineTo(13*s, 5*s); lineTo(39*s, 24*s); moveTo(62*s, 24*s); lineTo(88*s, 5*s); lineTo(82*s, 38*s) }
-        drawPath(ears, black, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 14*s))
-        drawCircle(black, radius = 40*s, center = Offset(50*s, 54*s))
-        if (dark) drawCircle(white, radius = 40*s, center = Offset(50*s, 54*s), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2*s))
-        drawCircle(white, radius = 11*s, center = Offset(35*s, 49*s))
-        drawCircle(white, radius = 11*s, center = Offset(65*s, 49*s))
-        drawCircle(black, radius = 5*s, center = Offset(36*s, 50*s))
-        drawCircle(black, radius = 5*s, center = Offset(64*s, 50*s))
-        drawCircle(white, radius = 3*s, center = Offset(50*s, 68*s))
-        if (outcome == Outcome.CORRECT) {
-            drawCircle(white, radius = 2*s, center = Offset(44*s, 76*s))
-            drawCircle(white, radius = 2*s, center = Offset(56*s, 76*s))
-            drawCircle(white, radius = 3*s, center = Offset(8*s, 19*s))
-            drawCircle(white, radius = 3*s, center = Offset(92*s, 19*s))
-        } else if (outcome == Outcome.PARTIAL || outcome == Outcome.WRONG) {
-            drawLine(white, Offset(29*s, 33*s), Offset(41*s, 38*s), strokeWidth = 2*s)
-            drawLine(white, Offset(71*s, 33*s), Offset(59*s, 38*s), strokeWidth = 2*s)
-            if (outcome == Outcome.WRONG) drawCircle(white, radius = 3*s, center = Offset(78*s, 66*s))
-        } else if (outcome == Outcome.UNGRADABLE) {
-            drawCircle(white, radius = 3*s, center = Offset(50*s, 79*s))
-        }
-    }
+private fun studyInterval(millis: Long): String = when {
+    millis < 60_000 -> "< 1 min"
+    millis < 3_600_000 -> "${(millis / 60_000).coerceAtLeast(1)} min"
+    millis < 86_400_000 -> (millis / 3_600_000).coerceAtLeast(1).let { "$it ${if (it == 1L) "ora" else "ore"}" }
+    else -> (millis / 86_400_000).coerceAtLeast(1).let { "$it ${if (it == 1L) "giorno" else "giorni"}" }
 }
