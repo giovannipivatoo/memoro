@@ -1,0 +1,6 @@
+Asset del pet: 罗小黑 (Luo Xiaohei)
+
+Spritesheet del pet personale luoxiaohei2d indicato dall’utente, riutilizzato senza modifiche.
+Descrizione originale: A tiny black cat Codex companion inspired by Luo Xiaohei, simplified into a cute polished Codex digital pet style.
+
+Codice di animazione Memoro: BSD-2-Clause.
