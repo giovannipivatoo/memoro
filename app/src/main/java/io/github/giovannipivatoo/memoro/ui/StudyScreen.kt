@@ -136,7 +136,7 @@ internal fun StudyScreen(
             }
         } else Text("Modalità: ${mode.studyLabel()}", style = MaterialTheme.typography.labelMedium)
         if (mode != AnswerMode.CLASSIC) {
-            OutlinedTextField(answer, { answer = it }, enabled = !submitted && !busy, label = { Text("La tua risposta") }, minLines = 3,
+            OutlinedTextField(answer, { answer = it }, enabled = !busy, readOnly = submitted, label = { Text("La tua risposta") }, minLines = 3,
                 modifier = Modifier.fillMaxWidth().testTag("answerInput"))
         }
         if (!submitted) {

@@ -124,7 +124,7 @@ internal fun SettingsScreen(actions: AppActions, onMessage: (String) -> Unit) {
         item { OutlinedTextField(model, { model = it }, label = { Text("Modello DeepSeek") }, modifier = Modifier.fillMaxWidth().testTag("modelName"), singleLine = true) }
         item { Button(onClick = { try { actions.saveApiKey(key.trim()); actions.saveModel(model.trim().ifBlank { "deepseek-flash" }); onMessage("Impostazioni salvate") } catch (e: Exception) { onMessage(e.message ?: "Impostazioni non salvate") } }, modifier = Modifier.testTag("saveSettings")) { Text("Salva API e modello") } }
         item { HorizontalDivider() }
-        item { Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Gattino", style = MaterialTheme.typography.titleMedium); Text("Silenzioso e senza animazioni") }; Switch(checked = pet, onCheckedChange = { pet = it; actions.savePetEnabled(it) }, modifier = Modifier.testTag("petSwitch")) } }
+        item { Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Gattino", style = MaterialTheme.typography.titleMedium); Text("Silenzioso; rispetta il movimento ridotto") }; Switch(checked = pet, onCheckedChange = { pet = it; actions.savePetEnabled(it) }, modifier = Modifier.testTag("petSwitch")) } }
         item { HorizontalDivider() }
         item { Text("Archivio", style = MaterialTheme.typography.titleLarge) }
         item { Text("Il ripristino sostituisce l'archivio locale dopo la verifica del file e crea una copia preventiva.") }

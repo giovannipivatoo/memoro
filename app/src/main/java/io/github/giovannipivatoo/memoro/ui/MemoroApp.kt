@@ -135,7 +135,7 @@ fun MemoroApp(repo: MemoroRepository, actions: AppActions, ai: DeepSeekClient = 
 
 @Composable
 private fun DecksScreen(repo: MemoroRepository, onOpen: (Long) -> Unit, onError: (String) -> Unit) {
-    val decks by repo.observeDecks().collectAsState(initial = emptyList())
+    val decks by remember(repo) { repo.observeDecks() }.collectAsState(initial = emptyList())
     var dueCounts by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     LaunchedEffect(decks) {
         val now = System.currentTimeMillis()
@@ -192,11 +192,12 @@ private fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> U
     val cards by remember(deckId) { repo.observeCards(deckId) }.collectAsState(initial = emptyList())
     var selected by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var delete by remember { mutableStateOf<Note?>(null) }
+    var savingModes by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${notes.size} note · ${cards.size} carte", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            TextButton(onClick = onStudy, modifier = Modifier.testTag("studyDeck")) { Text("Studia") }
+            TextButton(enabled = !savingModes, onClick = onStudy, modifier = Modifier.testTag("studyDeck")) { Text(if (savingModes) "Salvataggio…" else "Studia") }
             FilledIconButton(onClick = { onEdit(0) }, modifier = Modifier.testTag("addNote")) { Icon(Icons.Default.Add, "Nuova nota") }
         }
         if (selected.isNotEmpty()) {
@@ -205,7 +206,10 @@ private fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> U
                 AnswerMode.entries.forEach { mode ->
                     val targets = cards.filter { it.id in selected }
                     val allHave = targets.isNotEmpty() && targets.all { mode in it.modes }
-                    FilterChip(selected = allHave, onClick = { scope.launch {
+                    FilterChip(selected = allHave, enabled = !savingModes, onClick = {
+                        if (savingModes) return@FilterChip
+                        savingModes = true
+                        scope.launch {
                         try {
                             targets.forEach { card ->
                                 val note = notes.firstOrNull { it.id == card.noteId }
@@ -215,6 +219,7 @@ private fun DeckScreen(repo: MemoroRepository, deckId: Long, onEdit: (Long) -> U
                                 repo.saveCard(card.copy(modes = next.ifEmpty { setOf(AnswerMode.CLASSIC) }))
                             }
                         } catch (e: Exception) { onError(e.message ?: "Aggiornamento non riuscito") }
+                        finally { savingModes = false }
                     } }, label = { Text(mode.label()) })
                 }
             }
@@ -312,10 +317,18 @@ private fun NoteEditorScreen(repo: MemoroRepository, deckId: Long, noteId: Long,
         Button(enabled = front.isNotBlank() && (kind == NoteKind.CLOZE || back.isNotBlank()), onClick = { scope.launch { try {
                 val fields = if (original?.anki != null && original?.fields?.size == 1) listOf(front)
                     else listOf(front, back) + original?.fields.orEmpty().drop(2)
-                repo.saveNote((original ?: Note(deckId = deckId, fields = emptyList())).copy(
+                val updated = (original ?: Note(deckId = deckId, fields = emptyList())).copy(
                     kind = kind, fields = fields,
                     source = SourceReference(source, sourceTitle, sourceUrl, sourcePage, essential),
-                )); onDone()
+                )
+                if (updated.anki != null && updated.id > 0) {
+                    val cards = repo.snapshot().cards.filter { it.noteId == updated.id }.map { card ->
+                        val faces = AnkiRenderer.basicFaces(updated.fields, updated.kind, card.ordinal)
+                        card.copy(front = faces.first, back = faces.second)
+                    }
+                    repo.saveNoteAndCards(updated, cards)
+                } else repo.saveNote(updated)
+                onDone()
         } catch (e: Exception) { onError(e.message ?: "Nota non salvata") } } }, modifier = Modifier.fillMaxWidth().testTag("saveNote")) { Text("Salva nota") }
     }
 }

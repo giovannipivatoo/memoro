@@ -17,7 +17,9 @@ import io.github.giovannipivatoo.memoro.data.MemoroRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 
 private val mediaMarker = Regex("\\[(image|audio):([^]]+)]")
 
@@ -44,14 +46,23 @@ internal fun StudyFace(face: String, repo: MemoroRepository, modifier: Modifier 
 private fun StudyImage(repo: MemoroRepository, path: String) {
     val image by produceState<android.graphics.Bitmap?>(null, path) {
         value = withContext(Dispatchers.IO) {
-            repo.openFile(path)?.use { input ->
-                val bytes = input.readBytes()
-                if (bytes.size > 12 * 1024 * 1024) return@use null
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                val sample = generateSequence(1) { it * 2 }.first { bounds.outWidth / it <= 1600 && bounds.outHeight / it <= 1600 }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-            }
+            try {
+                repo.openFile(path)?.use { input ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (output.size() + count > 12 * 1024 * 1024) return@use null
+                        output.write(buffer, 0, count)
+                    }
+                    val bytes = output.toByteArray()
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    val sample = generateSequence(1) { it * 2 }.first { bounds.outWidth / it <= 1600 && bounds.outHeight / it <= 1600 }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
+            } catch (_: IOException) { null } catch (_: IllegalArgumentException) { null }
         }
     }
     if (image != null) Image(image!!.asImageBitmap(), contentDescription = "Immagine della carta", modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp), contentScale = ContentScale.Fit)
