@@ -6,7 +6,7 @@
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Memoro"
-        android:icon="@drawable/ic_memoro"
+        android:icon="@mipmap/ic_memoro"
         android:supportsRtl="true"
         android:theme="@style/Theme.Memoro"
         android:usesCleartextTraffic="false">
